@@ -29,3 +29,6 @@ neo4j/data/
 
 logs/
 *.log
+
+# Claude Code session context
+CLAUDE.md
