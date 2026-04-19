@@ -127,5 +127,19 @@ class NetworkXBackend(GraphBackend):
             rels.append(data["relationship"])
         rels.sort(key = lambda r: r.created_at)
         return rels
+
+    def search_entities(self, entity_type: str | None = None, name_hint: str | None = None) -> list[Entity]:
+        results = []
+        hint_lower = name_hint.lower() if name_hint else None
+        for _, data in self.__graph.nodes(data=True):
+            entity = data["entity"]
+            if entity_type and entity.type != entity_type:
+                continue
+            if hint_lower:
+                name = entity.properties.get("name", "").lower()
+                if hint_lower not in name:
+                    continue
+            results.append(entity)
+        return results
         
 

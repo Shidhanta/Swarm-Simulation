@@ -344,6 +344,46 @@ A record of what was built in each commit and the reasoning behind key decisions
 - **Repository pattern** — The graph backend acts as a repository for entities and relationships, abstracting away storage details.
 - **Temporal pattern (bitemporal)** — Facts carry validity periods, enabling point-in-time queries and full history reconstruction.
 
+### Commit 3: `feat: graph ingestion pipeline with episodic lineage`
+
+**What was built:**
+- `src/swarm/graph/ontology.py` — `EntityType`, `RelationshipType`, `Ontology` models with prompt formatting
+- `src/swarm/graph/prompts.py` — 5 structured prompt templates (ontology generation, entity extraction/resolution, relationship extraction/resolution)
+- `src/swarm/graph/ingestion.py` — Full ingestion pipeline: episode creation, entity/relationship extraction and resolution, lineage tracking
+- Updated `base.py` with `search_entities()` method on the ABC
+- Updated `networkx_backend.py` with `search_entities()` implementation
+
+**Key decisions and reasoning:**
+
+- **Episode-centric ingestion (inspired by Graphiti/Zep)** — Every piece of ingested text is stored as an Episode entity in the graph. All facts extracted from that text get `SOURCED_FROM` edges pointing back to the episode. This enables lineage tracking ("where did this fact come from?"), counterfactual analysis ("what if this episode never happened?"), and audit trails.
+
+- **Ontology-constrained extraction (inspired by MiroFish)** — Extraction is constrained by a declared ontology (allowed entity types and relationship types). This guarantees consistent graph structure across multiple ingestion episodes. Without it, an LLM might output "Company" in one call and "Corporation" in the next for the same concept.
+
+- **Two-mode ontology input** — Users can provide their own ontology (full control) or let the LLM generate one from the seed text + domain. There is no unconstrained mode — ingestion always operates against an ontology. This eliminates a code path and ensures agents can always rely on predictable graph schema.
+
+- **Ontology stored in graph as nodes** — Ontology definitions are stored as `OntologyEntity` and `OntologyRelationship` nodes linked to the episode that introduced them. This means agents can introspect the schema ("what types of entities exist?") and ontology changes across simulation runs are tracked with lineage.
+
+- **`Callable[[str], str]` for LLM calls** — The ingestion pipeline takes any function that maps prompt → response string. This is provider-agnostic by design — works with Ollama, Gemini, OpenAI, or a mock function for testing. No dependency on the LLM abstraction layer (which is built separately).
+
+- **4 LLM calls per episode (batched resolution)** — Entity resolution and relationship resolution are batched (all entities resolved in one call, all relationships in one call). Per-entity resolution would require N+M calls for N entities and M relationships. Batching keeps it fixed at 4 calls regardless of how many entities/relationships are extracted.
+
+- **Entity resolution via LLM** — Rather than fuzzy string matching, we ask the LLM to determine if extracted entities match existing graph entities. The LLM can handle abbreviations ("Tesla" vs "Tesla Inc"), contextual equivalence ("the EV maker" → Tesla), and subtle distinctions that rule-based matching misses.
+
+- **Relationship contradiction detection** — New relationships don't just get inserted blindly. They're checked against existing edges between the same entity pair. If a contradiction is found (e.g., "X is CEO of Y" replaced by "X is former CEO of Y"), the old edge is expired and the new one inserted. Facts are never deleted, only expired — preserving full history.
+
+- **Structured prompts with JSON output schemas** — Prompts follow the MiroFish pattern: role description at top, explicit constraints (naming conventions, formatting rules), and a JSON schema showing the exact expected output format. The "no markdown fences, raw JSON only" instruction plus a cleanup regex (`_parse_json`) handles the common case where LLMs add code fences anyway.
+
+- **`search_entities()` on the ABC** — Needed for entity resolution to retrieve candidate matches from the graph. Filters by entity type and does case-insensitive substring matching on the `name` property. Added to the ABC (not just NetworkX) because any backend will need this for ingestion to work.
+
+**Design patterns used:**
+- **Pipeline pattern** — Ingestion is a linear pipeline of discrete stages (episode → extract → resolve → insert), each stage consuming the output of the previous one.
+- **Strategy pattern (again)** — `extract_fn: Callable[[str], str]` is a strategy for LLM interaction, injected at call time.
+- **Event sourcing (inspiration)** — Episodes function like events in event sourcing. The graph state at any point can theoretically be reconstructed by replaying episodes in order. Each fact is traceable to the event that produced it.
+
+**Algorithms:**
+- **Entity resolution** — candidate retrieval via `search_entities()` (type + name substring filter), then LLM-based semantic matching. This is a two-stage approach: cheap filter first (reduce candidates), expensive LLM second (semantic judgment).
+- **Contradiction detection** — for each entity pair with new relationships, retrieve all active (non-expired) existing relationships. LLM determines if any new fact invalidates an old one.
+
 ---
 
 ## Interview Q&A

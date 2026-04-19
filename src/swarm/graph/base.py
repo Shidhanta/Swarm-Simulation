@@ -90,4 +90,12 @@ class GraphBackend(ABC):
     @abstractmethod
     def get_entity_history(self, entity_id: str) -> list[Relationship]:
         pass
+
+    @abstractmethod
+    def search_entities(
+        self,
+        entity_type: str | None = None,
+        name_hint: str | None = None
+    ) -> list[Entity]:
+        pass
      
