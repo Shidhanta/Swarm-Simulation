@@ -384,6 +384,41 @@ A record of what was built in each commit and the reasoning behind key decisions
 - **Entity resolution** — candidate retrieval via `search_entities()` (type + name substring filter), then LLM-based semantic matching. This is a two-stage approach: cheap filter first (reduce candidates), expensive LLM second (semantic judgment).
 - **Contradiction detection** — for each entity pair with new relationships, retrieve all active (non-expired) existing relationships. LLM determines if any new fact invalidates an old one.
 
+### Commit 4: `feat: LLM provider abstraction with fallback chain`
+
+**What was built:**
+- `src/swarm/llm/base.py` — `LLMProvider` ABC with `complete(prompt) -> str` and `as_callable()` helper
+- `src/swarm/llm/ollama_provider.py` — Ollama adapter using the `ollama` Python SDK
+- `src/swarm/llm/gemini_provider.py` — Google Gemini adapter (optional dependency, guarded import)
+- `src/swarm/llm/fallback.py` — `FallbackProvider` wrapper for transparent failover
+- `src/swarm/llm/factory.py` — `create_provider(config)` factory that builds provider chain from YAML config
+- `src/swarm/llm/__init__.py` — Public API re-exports
+- Updated `configs/default.yaml` with fallback and gemini config sections
+
+**Key decisions and reasoning:**
+
+- **`complete(prompt: str) -> str` as the sole interface** — The simplest possible contract. Takes a string prompt, returns a string response. No system prompt parameter, no message history, no streaming. The prompt templates already contain all instructions (role, constraints, schema), so a separate system prompt is unnecessary complexity. If streaming or multi-turn is needed later, those become separate methods on the ABC — they don't complicate the base contract.
+
+- **`as_callable()` bridge method** — Returns `self.complete` as a `Callable[[str], str]`. This is the integration point with the ingestion pipeline, which was designed to accept any callable. The bridge makes the connection explicit without coupling `ingestion.py` to `LLMProvider`.
+
+- **Fallback as a wrapper (decorator pattern)** — `FallbackProvider` wraps any two providers. If the primary raises `RuntimeError` or `ConnectionError`, it transparently retries with the fallback. This is composable — you could chain `FallbackProvider(primary, FallbackProvider(secondary, tertiary))` for three levels. The wrapper doesn't know or care what providers it wraps.
+
+- **Factory function from config dict** — `create_provider(config)` reads the `llm` section of `default.yaml` and constructs the appropriate provider (or chain). This keeps provider construction out of business logic. The caller just passes the config and gets back an `LLMProvider` ready to use.
+
+- **Ollama as default + fallback** — Ollama is local, free, and keyless. The default config uses `llama3` as primary and `llama3.2` as fallback (a smaller model that's more likely to be downloaded). If Ollama isn't running at all, a clear `ConnectionError` is raised with installation instructions.
+
+- **Gemini as optional dependency with guarded import** — `google-generativeai` is only imported if the user selects the Gemini provider. The import is guarded with a try/except at module level, and `GeminiProvider.__init__` raises `ImportError` if the package isn't installed. This means the core engine has zero dependency on Google's SDK.
+
+- **Deferred Gemini import in factory** — `factory.py` only imports `GeminiProvider` inside the `elif provider_type == "gemini"` branch. Users who never use Gemini never pay the import cost or need the package installed.
+
+- **Error classification** — `OllamaProvider` raises `RuntimeError` for API-level errors (bad model name, generation failure) and `ConnectionError` for network-level errors (Ollama not running). `FallbackProvider` catches both — any failure triggers fallback, regardless of whether it's "model not found" or "server unreachable."
+
+**Design patterns used:**
+- **Strategy pattern** — `LLMProvider` ABC is the strategy interface; Ollama and Gemini are concrete strategies.
+- **Decorator pattern** — `FallbackProvider` wraps another provider, adding failover behavior without modifying the wrapped provider.
+- **Factory pattern** — `create_provider()` encapsulates construction logic, returning the right provider based on config.
+- **Adapter pattern** — Each provider adapts a vendor-specific SDK (ollama, google-generativeai) into the uniform `LLMProvider` interface.
+
 ---
 
 ## Interview Q&A
