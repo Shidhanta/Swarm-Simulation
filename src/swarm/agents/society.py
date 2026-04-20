@@ -58,6 +58,7 @@ class AgentSociety:
             persona=persona,
             graph=self._graph,
             llm_config=self._llm_config,
+            enable_tools=self._llm_config.get("enable_tools", False),
         )
         self._agents[persona.entity_id] = agent
         self._states[persona.entity_id] = state

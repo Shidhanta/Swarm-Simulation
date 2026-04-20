@@ -39,11 +39,14 @@ class SwarmAgent:
         persona: AgentPersona,
         graph: GraphBackend,
         llm_config: dict,
+        enable_tools: bool = False,
     ):
         self.persona = persona
         self._graph = graph
-        toolkit = KnowledgeGraphToolkit(graph)
-        tools = [FunctionTool(fn) for fn in toolkit.get_tools()]
+        tools = None
+        if enable_tools:
+            toolkit = KnowledgeGraphToolkit(graph)
+            tools = [FunctionTool(fn) for fn in toolkit.get_tools()]
         platform = PLATFORM_MAP[llm_config["provider"]]
         model = ModelFactory.create(
             model_platform=platform,
