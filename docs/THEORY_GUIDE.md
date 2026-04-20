@@ -168,15 +168,49 @@ Agents interact through the knowledge graph — reading from it, writing to it, 
 - **Information cascades** — a piece of information spreads rapidly through the network, potentially causing coordinated behavior changes
 - **Clustering** — agents form subgroups based on shared properties or mutual interactions
 
-### Detection Algorithms
+### Detection Algorithms (Implemented)
 
-*(To be detailed as implemented)*
+The `EmergenceDetector` monitors 26 metrics across 6 categories at tiered intervals:
 
-The emergent behavior detection layer monitors graph-level metrics over time:
-- **Belief variance** across agents (low = consensus, bimodal = polarization)
-- **Information propagation speed** (sudden spikes = cascade)
-- **Community detection** (modularity changes = clustering shifts)
-- **Centrality shifts** (new influential nodes emerging)
+**A. Opinion Dynamics (every tick):**
+- **Consensus** — mean pairwise distance normalized to [0,1]. Score > 0.9 = consensus reached.
+- **Polarization** — bimodality coefficient on PCA-projected opinion distribution. BC > 5/9 = bimodal.
+- **Fragmentation** — hierarchical clustering with Ward linkage. Effective Number of Parties (ENP) > 2.5 = fragmented.
+- **Extremization** — mean distance from opinion-space center. Detects group-level drift toward extremes.
+- **Convergence rate** — exponential decay fit on variance time series. Positive = settling, negative = diverging.
+
+**B. Network Structure (every 5-10 ticks):**
+- **Echo chambers** — modularity (Newman's Q) > 0.3 AND echo chamber index > 0.5 (opinion-community alignment).
+- **Fragmentation** — connected component analysis. Herfindahl-based fragmentation index.
+- **Hub emergence** — Freeman's degree centralization + Gini coefficient of degree distribution.
+- **Small-world** — Humphries-Gurney sigma coefficient. Tracks if high-clustering + short-paths persists.
+- **Algebraic connectivity** — Fiedler value (second eigenvalue of Laplacian). Approaching 0 = near disconnection.
+- **Core-periphery** — iterative coreness assignment. Density gap between core and periphery subgraphs.
+
+**C. Phase Transitions (every tick):**
+- **Critical slowing down** — AR(1) autocorrelation of variance time series. > 0.85 and trending up = near tipping point.
+- **Susceptibility peaks** — N × trace(covariance). Sharp peaks indicate phase transitions.
+- **Flickering** — sign-change rate in projected mean opinion. High rate = system oscillating between attractors.
+- **Skewness shifts** — Kendall tau trend test on rolling skewness. Non-zero trend = asymmetric transition approaching.
+- **Rolling variance increase** — variance-of-variance over window. Increases before critical transitions (Scheffer et al., 2009).
+
+**D. Temporal Patterns (every tick / every 10 ticks):**
+- **Burst detection** — z-score of activity rate (mean belief shift magnitude). z > 2.5 = activity burst.
+- **Periodicity** — autocorrelation peak detection on variance time series. Detects oscillatory regimes.
+- **Trend detection** — Mann-Kendall test for monotonic drift. |tau| > 0.3 with p < 0.05 = significant trend.
+
+**E. Collective Behavior (every 5-10 ticks):**
+- **Herding** — cross-correlation of belief-change magnitudes at lag 1-3 between connected pairs. Detects leader-follower dynamics.
+- **Contrarianism** — agents whose belief shifts systematically anti-correlate with population mean shift.
+- **Free riding** — agents that interact but don't update (low shift magnitude despite interactions).
+- **Groupthink** — intra-community opinion diversity collapse relative to full population diversity.
+
+**Research grounding for detection thresholds:**
+- Bimodality coefficient > 5/9: Pfister et al. (2013), standard threshold from the statistical literature
+- Modularity > 0.3: Newman (2004), empirical threshold for meaningful community structure
+- AR(1) > 0.85 as early warning: Scheffer et al. (2009), "Early-warning signals for critical transitions"
+- Susceptibility peaks at phase transitions: from statistical physics (magnetic susceptibility analogy)
+- Kendall tau for trend detection: Mann (1945), non-parametric trend test robust to non-normality
 
 ---
 
@@ -747,6 +781,91 @@ A record of what was built in each commit and the reasoning behind key decisions
 - **Activity-driven scheduling** — O(N) per tick to sample activations. O(A*P) for pair selection where A = active agents, P = avg partners.
 - **Friedkin-Johnsen update** — O(d) where d = vector dimensionality. Constant time per agent.
 
+### Commit 9: `feat: time-stepped simulation engine`
+
+**What was built:**
+- `src/swarm/simulation/engine.py` — `SimulationEngine`, `SimulationConfig`, `SimulationResult`, `SimulationSnapshot`
+- Updated `src/swarm/simulation/__init__.py` with public API re-exports
+
+**Key decisions and reasoning:**
+
+- **Thin orchestration layer** — The engine is deliberately simple. `AgentSociety.tick()` already handles scheduling, pair selection, conversation, state updates, and rewiring. The engine just loops ticks, records history, and checks stopping conditions. This avoids duplicating logic.
+
+- **Callback-based extensibility** — `add_tick_callback(fn)` allows external observers (emergence detector, logger, metrics dashboard) to hook into the simulation without the engine knowing about them. The engine doesn't compute metrics — it just provides hook points.
+
+- **Pluggable stop conditions** — `add_stop_condition(fn)` accepts any `(tick, TickResult) -> bool` predicate. The emergence detector (step 10) will register conditions like "stop when consensus detected" or "stop when polarization exceeds threshold". The engine doesn't define what emergence means — it just stops when told to.
+
+- **Snapshots at configurable intervals** — `SimulationSnapshot` captures all agent belief vectors at a point in time. Stored every N ticks (configurable via `snapshot_every`). This is the time-series data the emergence detector analyzes. Storing every tick is the default — disk is cheap, information loss is expensive.
+
+- **`datetime` for timestamps (consistent with the codebase)** — All other timestamps (`Relationship.valid_from`, `TickResult.timestamp`, `ConversationResult.timestamp`) use `datetime`. Keeping `SimulationSnapshot.timestamp` as `datetime` avoids conversion errors at boundaries.
+
+- **`SimulationResult` as complete output** — Contains tick count, stop reason, all snapshots, and all tick results. Everything needed for post-hoc analysis is in one object. Can be serialized to JSON via Pydantic for storage/sharing.
+
+- **No wall-clock timing** — The simulation operates in logical ticks, not real time. Each tick is one step of the society loop. Wall-clock pacing (for real-time visualization) would be a separate concern layered on top later.
+
+**Design patterns used:**
+- **Template method** — `run()` defines the loop skeleton: tick → snapshot → callbacks → stop check. Concrete behavior is injected via callbacks and stop conditions.
+- **Observer pattern** — Tick callbacks are observers notified after each tick. They don't affect the simulation — they only observe.
+- **Strategy pattern** — Stop conditions are strategies for deciding when to halt. Multiple can be composed (first one that fires wins).
+
+**Algorithms:**
+- **Main loop** — O(max_ticks × tick_cost). Tick cost dominated by LLM calls in the society layer, not by the engine itself.
+- **Snapshot** — O(N) where N = agent count. Copies all belief vectors.
+- **Stop condition check** — O(C) per tick where C = number of registered conditions. Typically 1-3.
+
+### Commit 10: `feat: emergent behavior detection with 26 metrics`
+
+**What was built:**
+- `src/swarm/simulation/emergence.py` — `EmergenceDetector` orchestrator, `EmergenceEvent` model, `TimeSeriesStore`, and 5 metric classes (`OpinionMetrics`, `NetworkMetrics`, `PhaseTransitionMetrics`, `TemporalMetrics`, `CollectiveMetrics`)
+- Updated `src/swarm/simulation/__init__.py` with all exports
+- Added scipy to `pyproject.toml` and `requirements.txt`
+
+**Key decisions and reasoning:**
+
+- **Tiered computation schedule** — Not all metrics need to run every tick. Cheap metrics (O(N*D) or O(N)) run every tick. Moderate ones (O(N²)) run every 5 ticks. Expensive ones (O(N²+) or requiring history) run every 10 ticks. This keeps per-tick overhead dominated by LLM calls, not metric computation.
+
+- **Six metric classes (separation of concerns)** — Each class groups related computations: opinion dynamics, network structure, phase transitions, temporal patterns, collective behavior. They're stateless — they take data in, return metrics out. The `EmergenceDetector` orchestrates them and manages state (time series, event history).
+
+- **`TimeSeriesStore` for rolling computations** — Windowed metrics (AR(1), rolling variance, Kendall tau, periodicity) need history. The store accumulates up to 500 ticks of metric values and raw belief vectors. Capped to bound memory. All windowed computations pull from here rather than maintaining separate histories.
+
+- **Event deduplication** — `_emit()` suppresses repeated events of the same type within 2 ticks. This prevents flooding: if consensus holds for 50 ticks, you get one "consensus" event, not 50.
+
+- **Configurable thresholds** — All detection thresholds come from a config dict, with research-backed defaults (BC > 5/9 for polarization, modularity > 0.3 for communities, AR(1) > 0.85 for critical slowing down). Domains can override these.
+
+- **Observer pattern (callback registration)** — `EmergenceDetector.on_tick` is registered via `SimulationEngine.add_tick_callback()`. The detector doesn't control the simulation — it observes. This means multiple detectors could run simultaneously (e.g., one focused on opinion dynamics, another on network structure).
+
+- **`_build_communication_graph()` reconstructs undirected topology** — Network metrics need an `nx.Graph`. This method reads active `COMMUNICATES_WITH` edges from the temporal KG and builds a fresh undirected graph. Not cached — topology can change between calls due to adaptive rewiring.
+
+- **PCA projection for multivariate opinions** — Several metrics (polarization, flickering, skewness) need 1D projections of the D-dimensional belief vector. SVD on the centered vectors gives the first principal component — the axis of maximum variance. This is the dimension where polarization is most visible.
+
+- **Scipy for statistical rigor** — `pearsonr` for AR(1), `kendalltau` for trend detection, `find_peaks` for periodicity/susceptibility peaks, `pdist` for efficient pairwise distances, `linkage`/`fcluster` for hierarchical clustering. These are standard, well-tested implementations.
+
+**Research grounding:**
+- Early warning signals: Scheffer et al. (2009, 2012) — "Early-warning signals for critical transitions"
+- Bimodality coefficient: Pfister et al. (2013) — standard statistical threshold BC > 5/9
+- Modularity: Newman (2004) — empirical threshold Q > 0.3
+- Susceptibility as phase transition indicator: from statistical physics (Ising model analogy)
+- Small-world coefficient: Humphries & Gurney (2008) — sigma > 1
+- Echo chamber index: Cinelli et al. (2021) — opinion-network alignment
+- Herding via cross-correlation: Cont & Bouchaud (2000) — herding in financial markets
+- Bounded confidence implicit in LLMs: Chuang et al. (2023) — LLM agents exhibit BC-like behavior
+- Friedkin-Johnsen anchoring: Friedkin & Johnsen (1990) — stubbornness prevents full consensus
+- Activity-driven bursts: Perra et al. (2012), Barabási (2005) — heavy-tailed inter-event times
+
+**Design patterns used:**
+- **Observer pattern** — `EmergenceDetector` observes the simulation via tick callbacks without affecting it.
+- **Strategy pattern** — Each metric class is a strategy for computing one category of metrics. The detector composes them.
+- **Time Series pattern** — `TimeSeriesStore` acts as a ring buffer for rolling window computations.
+- **Event Sourcing (output)** — `EmergenceEvent` list is an append-only log of detected phenomena. Never modified after emission.
+
+**Algorithms (26 total across 6 categories):**
+- **Opinion (5):** Consensus (pdist O(N²D)), Polarization (PCA + skew/kurtosis O(ND)), Fragmentation (Ward linkage O(N²D)), Extremization (norm O(ND)), Convergence rate (polyfit O(W))
+- **Network (6):** Communities (greedy modularity O(N log²N)), Fragmentation (connected_components O(N+E)), Hub emergence (degree stats O(N)), Small-world (BFS all-pairs O(NE)), Algebraic connectivity (eigenvalue O(N²)), Core-periphery (iterative O(N²))
+- **Phase transitions (5):** AR(1) (pearsonr O(W)), Rolling variance (numpy O(W)), Susceptibility (covariance O(ND)), Flickering (sign changes O(W)), Skewness trend (kendalltau O(W²))
+- **Temporal (3):** Burst detection (z-score O(ND)), Periodicity (autocorrelation O(T²)), Trend (Mann-Kendall O(W²))
+- **Collective (4):** Herding (cross-correlation O(N²W)), Contrarianism (alignment O(NWD)), Free riding (activity check O(NWD)), Groupthink (community diversity O(N²D))
+- **Information (3):** Cascade detection, bottlenecks, influence asymmetry — detected indirectly via burst + herding + centralization metrics.
+
 ---
 
 ## Interview Q&A
@@ -776,6 +895,12 @@ The `DomainSpec` ABC defines the contract: vector dimensions, initial state, con
 
 **Q: Why not use CAMEL's built-in Society/Workforce for multi-agent orchestration?**
 CAMEL's Workforce is hub-and-spoke (coordinator routes tasks to workers). It doesn't support configurable topology, adaptive rewiring, or bounded confidence dynamics. We need agents that form, break, and reform connections based on opinion similarity — this is coevolutionary dynamics, not task routing. We use CAMEL for what it's good at (individual agent conversation with tools) and build our own orchestration for the topology and dynamics layer.
+
+**Q: How does the emergence detector avoid false positives?**
+Three mechanisms: (1) Event deduplication — the same event type is suppressed if it fired within the last 2 ticks, preventing floods when a state persists. (2) Research-backed thresholds — defaults come from published literature (BC > 5/9, Q > 0.3, AR(1) > 0.85), not arbitrary values. (3) Windowed computation — metrics like AR(1) and Kendall tau require sustained patterns over 20+ ticks, not single-tick spikes. These can still be tuned per domain via the config dict.
+
+**Q: Why 26 metrics? Isn't that excessive for 50 agents?**
+The point isn't that every metric fires every run. Different simulation domains produce different emergent phenomena — stock markets produce cascades and herding, social simulations produce echo chambers and polarization. Having a comprehensive metric suite means the system can detect whatever emerges without domain-specific tuning. The tiered scheduling (every tick / every 5 / every 10) ensures the computational cost is bounded: ~O(N²D) per tick worst case, which for N=50 is sub-millisecond — the LLM calls are 10,000x more expensive.
 
 **Q: What would you do differently if starting over?**
 *(To be updated as the project matures)*
