@@ -197,11 +197,39 @@ Each agent has:
 - **Neighborhood** — the agent's local view of the knowledge graph (entities within N hops)
 - **Behavioral rules** — how the agent decides what to do each tick
 
+### Persona Generation Pipeline
+
+Agent personas are not hand-authored — they are derived from graph structure. The pipeline:
+
+1. **Select entity** — pick a graph node to become an agent
+2. **Extract context** — pull its 1-2 hop neighborhood, all relationships, entity properties
+3. **Format for LLM** — relationships rendered as `source --[TYPE]--> target`, neighbors listed with types
+4. **LLM generates persona** — structured JSON output: name, role, traits, goals, backstory, communication_style
+5. **Parse into model** — `AgentPersona` (Pydantic) holds the structured result
+6. **Bridge to CAMEL** — `persona_to_system_message()` converts the model into a system prompt string
+
+This means personas are:
+- **Graph-grounded** — traits and goals reflect actual entity position and connections
+- **Regenerable** — as the graph evolves, personas can be regenerated to reflect changed circumstances
+- **Traceable** — every persona links back to its source entity via `entity_id`
+
 ### Agent-Graph Coupling
 
 This is a key design decision: **agent behavior is a function of graph structure**. A well-connected agent with many information sources behaves differently from an isolated one. As the graph evolves (new relationships form, old ones expire), agent behavior naturally adapts.
 
 This means emergent behavior is truly emergent — it arises from the interaction between agent reasoning and graph topology, not from scripted scenarios.
+
+### Communication Model
+
+Agents interact through a turn-based conversation protocol:
+
+1. **Topic selection** — the simulation engine selects a topic for two agents to discuss (based on similarity, shared context, or simulation events)
+2. **Alternating turns** — Agent A speaks, Agent B responds, alternating for N turns (default 6)
+3. **Tool access** — during conversation, agents can query the knowledge graph via `KnowledgeGraphToolkit` (search entities, get neighbors, get relationships)
+4. **Result capture** — the full conversation is stored as a `ConversationResult` for later analysis by the emergence detector
+5. **Memory reset** — after each conversation, the agent's chat history is cleared. Persistent memory lives in the graph, not in CAMEL's context window.
+
+The `SwarmAgent` wrapper hides CAMEL internals from the rest of the system. The simulation engine interacts only with `SwarmAgent.step()` and `run_conversation()` — it never touches CAMEL classes directly.
 
 ---
 
@@ -220,10 +248,30 @@ CAMEL (Communicative Agents for "Mind" Exploration of Large Language Model Socie
 
 ### How This Project Uses CAMEL
 
-- Agent personas are generated from knowledge graph data and fed into CAMEL role definitions
-- CAMEL handles the conversation protocol between agents
-- Agent actions (graph updates, information sharing) are implemented as CAMEL tools
-- The simulation engine orchestrates which agents interact each tick
+CAMEL provides the LLM-agent primitives; this project provides the orchestration, graph coupling, and emergence detection.
+
+**What CAMEL handles:**
+- `ChatAgent` — stateful conversation with system message, memory, and tool calling
+- `ModelFactory` — connecting to Ollama/Gemini via OpenAI-compatible API
+- `FunctionTool` — auto-generating tool schemas from Python docstrings
+- Message passing protocol between agents
+
+**What this project handles (not built into CAMEL):**
+- Network topology — who talks to whom (driven by similarity scores)
+- Persona generation — deriving system messages from graph structure
+- Graph-as-tool — `KnowledgeGraphToolkit` wraps `GraphBackend` methods as CAMEL tools
+- Simulation orchestration — tick-based scheduling, conversation routing
+- Emergence detection — observing patterns across conversation histories
+
+**Integration flow:**
+```
+GraphBackend → GraphPersonaGenerator → AgentPersona
+    → persona_to_system_message() → CAMEL ChatAgent(system_message=...)
+    + KnowledgeGraphToolkit → CAMEL FunctionTool(...)
+    = SwarmAgent (our wrapper)
+```
+
+**Key design choice:** `SwarmAgent` wraps `ChatAgent` rather than extending it. This means we control the interface — if CAMEL's API changes, only `communication.py` needs updating. The rest of the system only knows about `SwarmAgent.step()` and `run_conversation()`.
 
 ### CAMEL vs Other Frameworks
 
@@ -577,6 +625,66 @@ A record of what was built in each commit and the reasoning behind key decisions
 - **Adamic-Adar** — O(|N(u)| + |N(v)|) to compute neighbor sets, O(|N(u) ∩ N(v)|) to sum contributions. Overall O(d²) where d is max degree.
 - **Personalized PageRank** — O(iterations × E) where E is edge count in the snapshot. 20 iterations × 50 nodes = trivial.
 - **Causal Walk** — O(num_walks × max_steps × avg_degree). With defaults (100 walks, 5 steps, ~10 avg degree) = ~5000 operations. Constant time regardless of graph size since walks are local.
+
+### Commit 6: `feat: agent persona generation from graph nodes`
+
+**What was built:**
+- `src/swarm/agents/base.py` — `AgentPersona` Pydantic model, `PersonaGenerator` ABC, `persona_to_system_message()` bridge function
+- `src/swarm/agents/prompts.py` — Persona generation prompt template
+- `src/swarm/agents/persona.py` — `GraphPersonaGenerator` implementation
+- `src/swarm/agents/__init__.py` — Public API re-exports
+
+**Key decisions and reasoning:**
+
+- **`AgentPersona` as structured Pydantic model (not raw string)** — Fields (name, role, traits, goals, backstory, communication_style) are individually addressable. The emergence detector can compare traits across agents without parsing strings. The simulation engine can filter agents by role. Serialization to JSON is free via Pydantic.
+
+- **`persona_to_system_message()` as a separate function** — Decouples the data model from the CAMEL integration. If CAMEL changes its API or we switch frameworks, only this function changes. The `AgentPersona` model remains stable.
+
+- **`Callable[[str], str]` for LLM (same pattern as ingestion)** — `PersonaGenerator.generate()` takes an `llm_fn` callable, not an `LLMProvider`. This means persona generation works with any LLM backend, mocks, or test fixtures. The same `provider.as_callable()` bridge works here.
+
+- **Configurable `neighbor_depth` (default 2)** — Depth 1 gives only direct connections (shallow persona). Depth 2 captures connections-of-connections, which provides richer context about the entity's structural position. Deeper than 2 produces diminishing returns for most graph sizes.
+
+- **Relationship formatting as `source --[TYPE]--> target`** — Human-readable for the LLM. Both source and target are resolved to names (not UUIDs) for better LLM comprehension. Falls back to UUID if entity lookup fails.
+
+- **Markdown fence stripping in `_parse_response()`** — LLMs frequently add code fences despite explicit instructions not to. Same pattern used in `graph/ingestion.py`. Defensive parsing rather than relying on model compliance.
+
+- **`entity_id` stored in persona** — Links the persona back to its graph source. Enables persona regeneration when the entity's neighborhood changes, and allows the simulation engine to look up an agent's graph position.
+
+**Design patterns used:**
+- **Strategy pattern** — `PersonaGenerator` ABC is the interface; `GraphPersonaGenerator` is the default strategy. Alternative strategies could generate personas from templates, config files, or external APIs.
+- **Bridge pattern** — `persona_to_system_message()` bridges our domain model to CAMEL's expected input format.
+- **Builder (implicit)** — `GraphPersonaGenerator.generate()` assembles a persona step-by-step: fetch entity → get relationships → get neighbors → format prompt → call LLM → parse result.
+
+### Commit 7: `feat: agent communication via CAMEL role-playing`
+
+**What was built:**
+- `src/swarm/agents/toolkit.py` — `KnowledgeGraphToolkit` wrapping graph methods as CAMEL-compatible tools
+- `src/swarm/agents/communication.py` — `SwarmAgent` wrapper, `ConversationResult`/`ConversationTurn` models, `run_conversation()` orchestrator
+- Updated `__init__.py` with all new exports
+- Codebase-wide cleanup: fixed indentation (6-space → 4-space PEP 8), removed unused imports
+
+**Key decisions and reasoning:**
+
+- **`SwarmAgent` wraps `ChatAgent` (composition, not inheritance)** — We control the interface. CAMEL's internal API changes don't propagate beyond `communication.py`. The rest of the system interacts only with `SwarmAgent.step(message) -> str` and `SwarmAgent.reset()`. This is the Adapter pattern — adapting CAMEL's API into our system's expectations.
+
+- **Config-driven model selection via `llm_config` dict** — `SwarmAgent` receives the `llm` section of `default.yaml` directly. Provider and model are runtime configuration, not code. `PLATFORM_MAP` translates our config strings ("ollama", "gemini") to CAMEL's `ModelPlatformType` enum.
+
+- **`KnowledgeGraphToolkit` with Google-style docstrings** — CAMEL's `FunctionTool` auto-generates OpenAI-compatible tool schemas from function signatures and docstrings. Google-style Args/Returns sections map directly to parameter descriptions in the schema. This means agents see well-described tools without manual schema authoring.
+
+- **Result caps (10 entities, 20 neighbors/relationships)** — LLM context windows are finite. Returning the entire graph would overwhelm the model. Caps ensure tool responses are digestible while still providing useful information.
+
+- **`run_conversation()` as free function (not a method)** — Takes two `SwarmAgent` instances and orchestrates. The simulation engine calls this function — agents don't initiate conversations themselves. This keeps the control flow explicit and observable.
+
+- **Alternating turns with shared `message` variable** — Agent A's response becomes Agent B's input. Simple ping-pong protocol. More complex protocols (multi-party, interrupt-based) can be built later as alternative conversation functions.
+
+- **`reset()` after each conversation** — CAMEL's `ChatAgent` accumulates message history. Without reset, context grows unboundedly across conversations. By resetting, each conversation starts fresh — persistent memory belongs in the knowledge graph, not in the LLM's context window.
+
+- **`ConversationResult` stores full exchange** — Every turn (speaker + content) is captured. The emergence detector can analyze conversation patterns across all agent pairs. The simulation engine can decide graph updates based on what was said.
+
+**Design patterns used:**
+- **Adapter pattern** — `SwarmAgent` adapts CAMEL's `ChatAgent` API to our system's interface. `KnowledgeGraphToolkit` adapts `GraphBackend` to CAMEL's tool format.
+- **Facade pattern** — `SwarmAgent` provides a simplified interface (just `step` and `reset`) hiding CAMEL's complexity (model creation, tool registration, message wrapping).
+- **Mediator pattern** — `run_conversation()` mediates the interaction between two agents without either agent knowing about the other's internals.
 
 ---
 

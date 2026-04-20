@@ -5,7 +5,7 @@ from datetime import datetime
 
 from pydantic import BaseModel, Field
 
-from swarm.graph.base import Entity, GraphBackend, Relationship, utc_now
+from swarm.graph.base import GraphBackend, utc_now
 from swarm.graph.ontology import Ontology
 from swarm.graph.prompts import (
     ENTITY_EXTRACTION,
