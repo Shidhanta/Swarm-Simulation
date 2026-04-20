@@ -301,6 +301,8 @@ GraphBackend → GraphPersonaGenerator → AgentPersona
 - **Community detection (Louvain/Girvan-Newman)** — identifying agent clusters
 - **Graph embeddings (Node2Vec or spectral)** — encoding agent position as feature vectors for adaptive behavior
 - **Temporal motif detection** — finding recurring patterns in graph evolution
+- **Spectral gap tracking** — eigenvalue analysis of the Laplacian for fragmentation early warning
+- **Transfer entropy** — directed information flow measurement between agent pairs
 
 ---
 
@@ -686,6 +688,65 @@ A record of what was built in each commit and the reasoning behind key decisions
 - **Facade pattern** — `SwarmAgent` provides a simplified interface (just `step` and `reset`) hiding CAMEL's complexity (model creation, tool registration, message wrapping).
 - **Mediator pattern** — `run_conversation()` mediates the interaction between two agents without either agent knowing about the other's internals.
 
+### Commit 8: `feat: multi-agent society with adaptive topology`
+
+**What was built:**
+- `src/swarm/agents/state.py` — `AgentState` with domain-agnostic belief vector, Friedkin-Johnsen anchoring, distance computation
+- `src/swarm/agents/domain.py` — `DomainSpec` ABC defining state shape, initialization, and update rules per domain
+- `src/swarm/agents/topology.py` — `TopologyManager` with Watts-Strogatz initialization and adaptive homophily rewiring
+- `src/swarm/agents/scheduler.py` — `InteractionScheduler` with activity-driven + event-driven scheduling
+- `src/swarm/agents/society.py` — `AgentSociety` orchestrator and `TickResult` model
+- Updated `pyproject.toml` with numpy dependency
+- Updated `__init__.py` with all new exports
+
+**Key decisions and reasoning:**
+
+- **Generic belief vector (not opinion-specific)** — `AgentState.vector` is a `list[float]` with no hardcoded semantics. Dimensions are defined by `DomainSpec.vector_dimensions()`. Stock domain might use [tech_sentiment, risk_appetite, market_confidence]; social domain might use [opinion_axis_1, trust_in_media]. The Deffuant distance, Friedkin-Johnsen anchoring, and rewiring logic all operate on the generic vector — they don't know what it represents. This prevents the society layer from being locked to any single simulation type.
+
+- **`DomainSpec` ABC as the domain contract** — Every domain provides: what dimensions the vector has, how to initialize from graph position, the confidence bound (epsilon), how conversations update state, and the similarity weighting strategy. The society layer calls these generically. Adding a new domain means implementing one class, not changing the engine.
+
+- **Friedkin-Johnsen anchoring built into `AgentState`** — `apply_anchoring(influence) = (1-λ)*influence + λ*initial_vector`. The stubbornness parameter λ prevents unrealistic full consensus — agents resist drifting too far from their initial position. This is grounded in Friedkin & Johnsen (1990) and produces more realistic dynamics than unbounded opinion averaging.
+
+- **Watts-Strogatz small-world initialization** — Real social networks have high clustering (my friends know each other) and short path lengths (small world). Random graphs lack clustering; lattices lack short paths. Watts-Strogatz gives both. The topology then evolves via adaptive rewiring — this is the starting point, not the fixed structure.
+
+- **Adaptive homophily rewiring** — After each interaction, if agents are too dissimilar (beyond confidence bound), the edge is probabilistically expired and a new edge forms toward a more similar agent. This creates a feedback loop: similar agents cluster → reinforced agreement → further clustering. This coevolution of topology and state is what produces phase transitions (fragmentation, echo chambers). Grounded in Gross & Blasius (2008) adaptive network models.
+
+- **All rewiring through temporal KG** — `expire_relationship()` + `add_relationship()` with `formed_reason` property. The full rewiring history is preserved in the graph. No edge is ever deleted — the emergence detector can trace exactly when and why the topology changed.
+
+- **Activity-driven scheduling with power-law rates** — Not all agents act every tick. Each agent has an `activity_rate` (set by the domain at initialization, potentially from graph centrality). Activation is probabilistic: `P(active) = rate * dt`. This produces bursty, heterogeneous activity patterns matching real social systems (Perra et al., 2012; Barabási, 2005).
+
+- **Event-driven overlay** — When an agent's state changes, its neighbors are pushed onto a priority queue. This means agents wake up when something relevant happens nearby, not just by random chance. Combines the realism of burstiness with the responsiveness of event-driven systems.
+
+- **Bounded confidence pre-filter in pair selection** — `scheduler.select_pairs()` skips pairs where `distance > confidence_bound`. This is the Deffuant bounded confidence mechanism — agents too far apart in belief space don't interact. Critical for CPU efficiency: avoids expensive Ollama calls for interactions that would produce no influence anyway.
+
+- **Weighted partner selection** — Among valid partners, selection is weighted by inverse distance (closer agents more likely to be picked). This produces preferential interaction with similar agents without completely excluding dissimilar ones within the bound.
+
+- **Topic generation from shared graph context** — `_generate_topic()` finds entities in the intersection of both agents' neighborhoods. Conversations are about shared context, not arbitrary topics. This grounds interactions in the knowledge graph state.
+
+- **`TickResult` captures full tick outcomes** — Active agents, pairs formed, conversations, and rewiring events. The emergence detection layer (next step) consumes these to track system evolution over time.
+
+**Research grounding:**
+- Adaptive coevolutionary networks: Gross & Blasius (2008), extended 2020+
+- Bounded confidence: Deffuant-Weisbuch model; Chuang et al. (2023) showing LLMs exhibit implicit bounded confidence
+- Friedkin-Johnsen anchoring: Friedkin & Johnsen (1990) — prevents unrealistic full consensus
+- Activity-driven temporal networks: Perra et al. (2012)
+- Small-world initialization: Watts & Strogatz (1998)
+- LLM multi-agent societies: Park et al. (2023) Generative Agents — proves 25-50 agents suffice for emergence
+- Opinion dynamics + LLM: Papachristou & Yuan (2024) on network formation among LLM agents
+
+**Design patterns used:**
+- **Strategy pattern** — `DomainSpec` ABC is the interface; each domain (stock, social) is a concrete strategy. The society layer operates identically regardless of domain.
+- **Observer pattern (implicit)** — `InteractionScheduler.notify_change()` propagates state changes to neighbors. Agents reactively wake when their context changes.
+- **Mediator pattern** — `AgentSociety` mediates all agent interactions. No agent directly references another — the society decides who communicates.
+- **Template method** — `AgentSociety.tick()` defines the algorithm skeleton (schedule → pair → converse → update → rewire → notify). Domain-specific behavior fills in via `DomainSpec` methods.
+- **Composition over inheritance** — `AgentSociety` composes `TopologyManager`, `InteractionScheduler`, `SimilarityEngine`, and `DomainSpec` rather than inheriting from any of them.
+
+**Algorithms:**
+- **Watts-Strogatz** — O(N*k) to create ring lattice, O(N*k*p) rewiring passes. For N=50, k=4: trivial.
+- **Adaptive rewiring** — O(N) to find candidates per rewire event. At most one rewire per interaction.
+- **Activity-driven scheduling** — O(N) per tick to sample activations. O(A*P) for pair selection where A = active agents, P = avg partners.
+- **Friedkin-Johnsen update** — O(d) where d = vector dimensionality. Constant time per agent.
+
 ---
 
 ## Interview Q&A
@@ -709,6 +770,12 @@ CAMEL's autonomous role-playing model maps directly to what a swarm simulation n
 
 **Q: How do you ensure simulation results are reproducible?**
 Seeded randomness (`simulation.seed` in config) controls agent scheduling and interaction selection. With the same seed, same config, and deterministic LLM responses (temperature=0), simulations produce identical results.
+
+**Q: How does the society layer handle domain extensibility?**
+The `DomainSpec` ABC defines the contract: vector dimensions, initial state, confidence bound, post-interaction update, and similarity weighting. Adding a new simulation domain (e.g., supply chain, epidemiology) means implementing one class — no engine changes. The society layer operates on generic belief vectors and never knows whether it's simulating stock traders or social media users. The Deffuant bounded confidence, Friedkin-Johnsen anchoring, and adaptive rewiring all work on the generic vector.
+
+**Q: Why not use CAMEL's built-in Society/Workforce for multi-agent orchestration?**
+CAMEL's Workforce is hub-and-spoke (coordinator routes tasks to workers). It doesn't support configurable topology, adaptive rewiring, or bounded confidence dynamics. We need agents that form, break, and reform connections based on opinion similarity — this is coevolutionary dynamics, not task routing. We use CAMEL for what it's good at (individual agent conversation with tools) and build our own orchestration for the topology and dynamics layer.
 
 **Q: What would you do differently if starting over?**
 *(To be updated as the project matures)*
