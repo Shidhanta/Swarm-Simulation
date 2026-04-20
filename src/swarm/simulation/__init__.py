@@ -16,11 +16,13 @@ from swarm.simulation.engine import (
     SimulationResult,
     SimulationSnapshot,
 )
+from swarm.simulation.runner import ExperimentRunner
 
 __all__ = [
     "CollectiveMetrics",
     "EmergenceDetector",
     "EmergenceEvent",
+    "ExperimentRunner",
     "NetworkMetrics",
     "OpinionMetrics",
     "PhaseTransitionMetrics",

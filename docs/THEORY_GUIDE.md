@@ -866,6 +866,46 @@ A record of what was built in each commit and the reasoning behind key decisions
 - **Collective (4):** Herding (cross-correlation O(N²W)), Contrarianism (alignment O(NWD)), Free riding (activity check O(NWD)), Groupthink (community diversity O(N²D))
 - **Information (3):** Cascade detection, bottlenecks, influence asymmetry — detected indirectly via burst + herding + centralization metrics.
 
+### Commit 11: `feat: config-driven experiment runner with CLI`
+
+**What was built:**
+- `src/swarm/agents/default_domain.py` — `DefaultDomainSpec` (config-parameterized) + `DefaultWeighting`
+- `src/swarm/simulation/runner.py` — `ExperimentRunner` (reads one YAML, executes full pipeline)
+- `src/swarm/__main__.py` — CLI entrypoint (`python -m swarm run config.yaml`)
+- `configs/experiments/wisdom_of_crowds.yaml` — first experiment config (Lorenz 2011 replication)
+- Updated `simulation/__init__.py` with `ExperimentRunner` export
+
+**Key decisions and reasoning:**
+
+- **Config-driven over code-driven** — Users should not write Python to run standard experiments. A YAML file specifying belief dimensions, interaction mode, confidence bound, and agent count is sufficient. The engine reads the config and does everything: graph creation, seeding, persona generation, society initialization, simulation loop, emergence detection.
+
+- **Three modes of operation:**
+  - **Config-only** — `DefaultDomainSpec` handles standard bounded confidence experiments. Built-in interaction modes (deffuant, mean_field, degroot, repulsive). No Python needed.
+  - **Config + LLM tools** — agent capabilities described in YAML, tool functions generated at runtime (architecture in place, implementation next).
+  - **Plugin** — custom `DomainSpec` subclass referenced by import path in config. For experiments that need domain logic beyond the built-in modes.
+
+- **`DefaultDomainSpec` with 4 interaction modes:**
+  - `deffuant` — standard bounded confidence (move toward other by mu if within epsilon)
+  - `mean_field` — move toward other regardless of distance
+  - `degroot` — weighted average (equal weight)
+  - `repulsive` — Deffuant within bound, PUSH AWAY if beyond (models backfire effect from Bail et al. 2018)
+
+- **Configurable initial belief distributions** — `uniform`, `normal`, `bimodal`. Covers the common experimental setups. Bimodal is needed for pre-polarized populations (Bail replication). Normal with tunable mean/std for experiments with initial consensus that may fragment.
+
+- **Three persona sources** — `minimal` (no LLM, fast testing), `generate` (LLM creates from graph neighborhood), `manual` (hand-defined in YAML). Minimal mode allows running the full pipeline without Ollama for development/testing — only the conversation step needs LLM.
+
+- **Dynamic plugin import** — `domain.plugin: "mymodule.ClassName"` uses `importlib.import_module` + `getattr` to load custom domain classes. No registry needed. Any Python class on the path that implements `DomainSpec` works.
+
+- **Full mesh topology option** — For Lorenz-style experiments where all agents can see/interact with all others. `topology.type: "full_mesh"` creates all N*(N-1)/2 edges. Alongside existing `small_world` initialization.
+
+- **CLI as `python -m swarm run`** — Standard Python module execution. No separate CLI framework needed (no click/argparse dependency). Just reads sys.argv[2] as config path.
+
+**Design patterns used:**
+- **Factory pattern** — `ExperimentRunner` is a factory that builds the entire simulation object graph from config.
+- **Strategy pattern** — interaction modes are strategies selected by config string. Persona sources are strategies. Topology types are strategies. All without subclassing.
+- **Configuration object pattern** — YAML → dict → passed to constructors. Single source of truth for all parameters.
+- **Plugin architecture** — dynamic import enables extension without modifying core code.
+
 ---
 
 ## Interview Q&A

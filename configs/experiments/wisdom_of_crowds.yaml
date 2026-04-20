@@ -1,0 +1,64 @@
+experiment:
+  name: "Lorenz 2011 - Wisdom of Crowds"
+  description: "Replicating social influence undermining crowd wisdom"
+  reference: "Lorenz et al. (2011) PNAS 108(22):9020-9025"
+
+domain:
+  name: "wisdom_of_crowds"
+  belief_dimensions: ["estimate"]
+  confidence_bound: 0.4
+  stubbornness: 0.2
+  convergence_rate: 0.3
+  interaction_mode: "mean_field"
+  similarity_weights:
+    ppr: 0.4
+    adamic_adar: 0.3
+    causal_walk: 0.3
+
+agents:
+  count: 12
+  persona_source: "minimal"
+  initial_beliefs:
+    distribution: "uniform"
+    range: [0.2, 0.8]
+  activity_rate:
+    min: 0.7
+    max: 1.0
+
+seed:
+  entities:
+    - type: "Question"
+      properties:
+        name: "Population of Zurich"
+        true_answer: 0.415
+    - type: "Question"
+      properties:
+        name: "Swiss border length"
+        true_answer: 0.623
+    - type: "Question"
+      properties:
+        name: "Number of new immigrants"
+        true_answer: 0.37
+
+topology:
+  type: "full_mesh"
+
+simulation:
+  max_ticks: 5
+  snapshot_every: 1
+  seed: 42
+
+detection:
+  thresholds:
+    consensus_threshold: 0.9
+    polarization_threshold: 0.555
+
+llm:
+  provider: "ollama"
+  model: "llama3"
+  base_url: "http://localhost:11434"
+  temperature: 0.7
+  max_tokens: 512
+
+graph:
+  backend: "networkx"
