@@ -98,4 +98,16 @@ class GraphBackend(ABC):
         name_hint: str | None = None
     ) -> list[Entity]:
         pass
-     
+
+    @abstractmethod
+    def get_weighted_snapshot(
+        self,
+        timestamp: datetime,
+        decay_lambda: float = 0.1                                                 
+    ) -> dict[str, list[tuple[str, str, float]]]:
+        """Active edges as adjacency dict with temporal decay weights.            
+                    
+        Returns: {source_id: [(target_id, rel_type, weight)]}
+        where weight = exp(-decay_lambda * seconds_since_edge_creation)           
+        """                                                                       
+        pass 

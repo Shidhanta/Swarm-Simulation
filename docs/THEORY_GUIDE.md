@@ -14,9 +14,10 @@ A living document covering the theory, algorithms, architecture, and implementat
 6. [Multi-Agent Systems](#multi-agent-systems)
 7. [CAMEL-AI Framework](#camel-ai-framework)
 8. [Graph Algorithms Used](#graph-algorithms-used)
-9. [LLM Integration Patterns](#llm-integration-patterns)
-10. [Build Log](#build-log)
-11. [Interview Q&A](#interview-qa)
+9. [Similarity and Proximity](#similarity-and-proximity)
+10. [LLM Integration Patterns](#llm-integration-patterns)
+11. [Build Log](#build-log)
+12. [Interview Q&A](#interview-qa)
 
 ---
 
@@ -241,12 +242,122 @@ CAMEL (Communicative Agents for "Mind" Exploration of Large Language Model Socie
 
 - **BFS traversal** (`get_neighbours` with depth parameter) — discovers all entities reachable within N hops from a starting node. Uses a deque-based iterative BFS (not recursive) to avoid stack overflow on deep graphs. Respects temporal validity — expired relationships are not traversed.
 
+- **Personalized PageRank** (`PPRScorer` in similarity.py) — power iteration over time-weighted adjacency. Computes reachability probability from a source node to all other nodes. Used for global structural similarity.
+
+- **Adamic-Adar Index** (`AdamicAdarScorer` in similarity.py) — shared-neighbor similarity weighted by inverse log-degree. Rare shared connections score higher than shared hubs. Used for local structural similarity.
+
+- **Causal Anonymous Walks** (`CausalWalkScorer` in similarity.py) — random walks with temporal ordering constraint. Walks only follow edges in decreasing weight order (forward in time). Used for temporal co-occurrence similarity.
+
 ### Planned
 
 - **Community detection (Louvain/Girvan-Newman)** — identifying agent clusters
-- **PageRank / Betweenness centrality** — finding influential agents
 - **Graph embeddings (Node2Vec or spectral)** — encoding agent position as feature vectors for adaptive behavior
 - **Temporal motif detection** — finding recurring patterns in graph evolution
+
+---
+
+## Similarity and Proximity
+
+### The Problem: Why a Single Similarity Score Fails
+
+Between any two agents in a swarm simulation, there are multiple independent reasons they might be "similar" — shared connections, structural proximity, temporal co-occurrence. Collapsing these into a single number loses the texture that emergence detection needs.
+
+A consensus event looks different in each dimension: PPR scores converge (structural homogenization) while Adamic-Adar stays stable (no new shared connections formed — the convergence happened through multi-hop influence). A single scalar would show "similarity went up" but hide the mechanism.
+
+### Research Grounding
+
+The hybrid multi-score approach is grounded in several lines of published research:
+
+**Foundational:**
+- Liben-Nowell & Kleinberg (2007) — "The Link Prediction Problem for Social Networks" — demonstrated that combining local (Adamic-Adar) and global (PageRank/Katz) measures outperforms either alone
+- Lü & Zhou (2011) — "Link prediction in complex networks: A survey" — formalized linear combination of local + global indices and showed they capture complementary information
+
+**Multi-Scale Learned Combination (Neo-GNN approach):**
+- Yun et al. (NeurIPS 2021) — "Neo-GNN: A New Graph Neural Network for Link Prediction" — learns weights for adjacency matrix powers A, A², A³... where A¹ captures local (common neighbors), Aᵏ converges to PPR-like global behavior. Demonstrates that optimal weighting is dataset-dependent, not universal.
+
+**Temporal and Causal:**
+- Wang et al. (ICLR 2021) — "Inductive Representation Learning in Temporal Networks via Causal Anonymous Walks" (CAWN) — temporal random walks respecting time ordering, combining local (short walks) and global (long walks) temporal structure
+- Liu et al. (AAAI 2022) — "TLogic: Temporal Logical Rules for Explainable Link Prediction" — purely symbolic temporal rule mining via time-respecting walks. CPU-only, no neural networks required.
+- Trivedi et al. (2017) — "Know-Evolve: Deep Temporal Reasoning for Dynamic Knowledge Graphs" — exponential time decay on edge weights: `w(edge) = exp(-λ · Δt)`
+
+**Scalable Subgraph Methods:**
+- Chamberlain et al. (ICLR 2023) — "BUDDY/ELPH" — sketch-based approximation of subgraph features capturing both local overlap and multi-hop structure without expensive extraction
+- Yin et al. (NeurIPS 2022) — "SUREL: Scalable Subgraph-Based Link Prediction" — pre-computed walk structures at multiple scales
+
+### Design: Similarity Vector, Not Scalar
+
+The system computes a **SimilarityProfile** — a named vector of scores — for each entity pair:
+
+```
+SimilarityProfile(u, v, t) = {
+    "ppr": 0.72,            # global structural proximity
+    "adamic_adar": 0.45,    # local shared-neighbor signal
+    "causal_walk": 0.61,    # temporal co-occurrence via time-respecting paths
+    ...domain_scores...     # extensible per simulation domain
+}
+```
+
+Two consumers use this differently:
+
+1. **Agent interaction layer** — a domain-specific `DomainWeighting` collapses the vector to a scalar that drives who talks to whom and influence strength. Stock market might weight temporal co-occurrence highest (herding from recent shared news), social media might weight structural proximity (echo chambers from topology).
+
+2. **Emergence detection layer** — watches the full vector distribution over time. Never sees the collapsed scalar. Patterns in the raw dimensions reveal emergence:
+   - Consensus: PPR scores converging across agent pairs
+   - Polarization: Adamic-Adar scores clustering bimodally
+   - Cascade: Causal walk scores spiking in wave patterns
+
+Both the full vector and the collapsed scalar are maintained per tick — the scalar explains agent behavior, the vector explains system-level phenomena.
+
+### Core Scorers
+
+#### Adamic-Adar (Temporal)
+
+Based on Adamic & Adar (2003), extended with temporal decay from the weighted snapshot.
+
+For entities u and v, the score is:
+
+```
+AA(u, v) = Σ_{z ∈ N(u) ∩ N(v)} 1 / log(|N(z)|)
+```
+
+Where N(x) is the set of neighbors of x in the time-decayed adjacency. Rare shared connections (low-degree z) contribute more than shared hubs. Normalized to [0, 1] by dividing by the maximum possible score (all neighbors shared).
+
+**What it captures:** Local, concrete shared context. Two agents connected to the same niche analyst are more meaningfully similar than two agents both connected to a major news source.
+
+#### Personalized PageRank (Temporal)
+
+Power iteration implementation of PPR with teleport probability α (default 0.85). Edge transition probabilities are weighted by temporal decay.
+
+```
+PPR_u(v) = α · 1(v=u) + (1-α) · Σ_{w→v} PPR_u(w) · weight(w→v) / Σ_{w→*} weight(w→*)
+```
+
+Iterates until convergence (default 20 iterations, sufficient for graphs under 100K nodes).
+
+**What it captures:** Global structural reachability. How easily information flows from u to v through the entire network, weighted by edge recency. Two agents may have no shared neighbors but still be strongly connected through the broader graph topology.
+
+#### Causal Walk
+
+Inspired by CAWN (Wang et al., 2021). Samples random walks from u that respect temporal ordering — each step follows an edge with weight ≤ the previous edge's weight (since `weight = exp(-λΔt)`, lower weight = older edge, so walks move from recent edges toward older ones).
+
+```
+CausalWalk(u, v) = (walks from u reaching v) / (total walks sampled)
+```
+
+The causal constraint means walks simulate realistic information propagation paths — information enters through recent connections and flows through established older channels.
+
+**What it captures:** Temporal co-occurrence and information propagation potential. High score means there exist plausible time-respecting paths through which information could have flowed from u to v.
+
+### Extensibility
+
+The `SimilarityScorer` ABC is a port — domain-specific scorers plug in as adapters:
+
+- Stock domain: `SectorAffinityScorer`, `PortfolioOverlapScorer`
+- Social domain: `OpinionDistanceScorer`, `EchoChamberScorer`
+
+These register with the `SimilarityEngine` alongside the core three. The `DomainWeighting` ABC defines how to collapse the full vector for driving agent interactions — each domain provides its own weighting strategy.
+
+The adjacency structure is passed to all scorers as a generic `dict[str, list[tuple[str, str, float]]]` — no backend coupling. Any future scorer (spectral, embedding-based, etc.) operates on the same structure.
 
 ---
 
@@ -418,6 +529,54 @@ A record of what was built in each commit and the reasoning behind key decisions
 - **Decorator pattern** — `FallbackProvider` wraps another provider, adding failover behavior without modifying the wrapped provider.
 - **Factory pattern** — `create_provider()` encapsulates construction logic, returning the right provider based on config.
 - **Adapter pattern** — Each provider adapts a vendor-specific SDK (ollama, google-generativeai) into the uniform `LLMProvider` interface.
+
+### Commit 5: `feat: hybrid similarity scoring with temporal proximity`
+
+**What was built:**
+- `src/swarm/graph/similarity.py` — `SimilarityScorer` ABC, `SimilarityProfile` model, `DomainWeighting` ABC, `SimilarityEngine`, and three core scorers (AdamicAdar, PPR, CausalWalk)
+- Updated `base.py` with `get_weighted_snapshot()` method on the `GraphBackend` ABC
+- Updated `networkx_backend.py` with `get_weighted_snapshot()` implementation
+- Updated `__init__.py` with re-exports for all similarity classes
+
+**Key decisions and reasoning:**
+
+- **Similarity vector, not scalar** — Between any two entities, the system computes a multi-dimensional profile rather than a single number. This preserves the *mechanism* of similarity, which the emergence detection layer needs. A scalar of 0.65 hides whether similarity comes from shared connections (local), structural position (global), or temporal co-occurrence (causal). The full vector lets the observer distinguish between convergence mechanisms.
+
+- **Two consumers, different views** — The agent interaction layer collapses the vector to a scalar via `DomainWeighting` (domain decides what matters for driving behavior). The emergence detection layer watches the raw vector distribution over time (no information loss). Both the collapsed scalar and the full vector are stored per tick.
+
+- **Generic adjacency structure (`dict[str, list[tuple[str, str, float]]]`)** — Scorers receive topology as a plain dict, not a NetworkX graph or any backend-specific object. This means: (1) any future backend implements `get_weighted_snapshot` once, (2) scorers are pure functions over topology, testable without a graph backend, (3) new algorithms (spectral, embedding-based) plug in without ABC changes.
+
+- **Temporal decay in the snapshot, not in scorers** — Edge weights already encode recency via `exp(-λΔt)` before scorers see them. This keeps scorer logic simple and ensures consistent temporal treatment across all scoring dimensions. The `decay_lambda` parameter is configurable per call.
+
+- **Bidirectional unpacking** — Each directed edge A→B produces two adjacency entries (A sees B, B sees A). Similarity is about proximity, not direction. If both A→B and B→A exist as real edges, the pair appears multiple times — naturally amplifying genuinely bidirectional connections without special-case code.
+
+- **Scorers operate on the same snapshot** — `SimilarityEngine.compute()` calls `get_weighted_snapshot()` once and passes the result to all scorers. No redundant graph traversals. O(E) to build the snapshot, then each scorer operates on the pre-built adjacency.
+
+- **`SimilarityScorer` ABC as port** — Domain-specific scorers (e.g., `SectorAffinityScorer` for stocks, `OpinionDistanceScorer` for social media) implement the same interface and register with the engine. Core graph-structural scorers coexist with domain-semantic scorers in the same profile.
+
+- **PPR via manual power iteration** — Implemented directly rather than calling `nx.pagerank`. The iteration operates on the generic adjacency dict, making it backend-agnostic. 20 iterations suffice for convergence on graphs under 100K nodes (the simulation caps at 50 agents, so this is vastly over-provisioned for safety).
+
+- **Causal walk constraint** — Walks only follow edges where `weight <= last_weight` (weight decreases with age, so this enforces time-forward traversal). This is directly inspired by CAWN (Wang et al., 2021) — walks simulate realistic information propagation paths. Seeded RNG ensures reproducibility.
+
+- **Normalization to [0, 1]** — All scorers return values in [0, 1]. Adamic-Adar normalizes by max possible score. PPR is naturally bounded. Causal walk is a fraction. This makes the profile dimensions comparable without post-hoc normalization in the engine.
+
+**Research grounding:**
+- Hybrid scoring: Lü & Zhou (2011), Liben-Nowell & Kleinberg (2007)
+- Learned multi-scale combination: Neo-GNN (Yun et al., NeurIPS 2021)
+- Causal temporal walks: CAWN (Wang et al., ICLR 2021)
+- Temporal edge decay: Know-Evolve (Trivedi et al., 2017)
+- Symbolic temporal rules: TLogic (Liu et al., AAAI 2022)
+
+**Design patterns used:**
+- **Strategy pattern** — `SimilarityScorer` ABC is the interface; each scorer (AA, PPR, CausalWalk) is a concrete strategy. Domain-specific scorers are additional strategies.
+- **Composite pattern** — `SimilarityEngine` composes multiple scorers into a unified computation. Adding a scorer doesn't change existing code.
+- **Adapter pattern** — `DomainWeighting` adapts the generic similarity vector to domain-specific agent interaction logic.
+- **Template method (variation)** — `SimilarityEngine.compute()` defines the algorithm skeleton (get snapshot → score all → optionally collapse). Scorers fill in the variable step.
+
+**Algorithms:**
+- **Adamic-Adar** — O(|N(u)| + |N(v)|) to compute neighbor sets, O(|N(u) ∩ N(v)|) to sum contributions. Overall O(d²) where d is max degree.
+- **Personalized PageRank** — O(iterations × E) where E is edge count in the snapshot. 20 iterations × 50 nodes = trivial.
+- **Causal Walk** — O(num_walks × max_steps × avg_degree). With defaults (100 walks, 5 steps, ~10 avg degree) = ~5000 operations. Constant time regardless of graph size since walks are local.
 
 ---
 

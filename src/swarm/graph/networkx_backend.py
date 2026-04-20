@@ -2,7 +2,7 @@ from collections import deque
 from datetime import datetime, timezone
 
 import networkx as nx
-
+import math
 from swarm.graph.base import Entity, GraphBackend, Relationship, utc_now
 
 class NetworkXBackend(GraphBackend):
@@ -141,5 +141,18 @@ class NetworkXBackend(GraphBackend):
                     continue
             results.append(entity)
         return results
-        
+    def get_weighted_snapshot(self, timestamp: datetime, decay_lambda: float = 
+  0.1) -> dict[str, list[tuple[str, str, float]]]:                              
+        adjacency: dict[str, list[tuple[str, str, float]]] = {}
+        for source_id, target_id, data in self.__graph.edges(data=True):          
+            rel = data["relationship"]                                            
+            if not self._is_active(rel, timestamp):                               
+                continue                                                          
+            delta = (timestamp - rel.valid_from).total_seconds()                  
+            weight = math.exp(-decay_lambda * delta)                              
+            adjacency.setdefault(source_id, []).append((target_id, rel.type,      
+    weight))                                                                      
+            adjacency.setdefault(target_id, []).append((source_id, rel.type,      
+    weight))                                                                      
+        return adjacency        
 
