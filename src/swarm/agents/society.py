@@ -42,6 +42,7 @@ class AgentSociety:
         self._topology = TopologyManager(
             graph=graph,
             rewire_prob=topo_cfg.get("rewire_prob", 0.1),
+            rewire_threshold=topo_cfg.get("rewire_threshold", None),
             edge_type=topo_cfg.get("edge_type", "COMMUNICATES_WITH"),
             seed=scheduler_seed,
         )
@@ -91,6 +92,7 @@ class AgentSociety:
                 agent_a=self._agents[agent_a_id],
                 agent_b=self._agents[agent_b_id],
                 topic=self._generate_topic(agent_a_id, agent_b_id),
+                max_turns=self._llm_config.get("max_turns", 6),
             )
             result.conversations.append(conversation)
 

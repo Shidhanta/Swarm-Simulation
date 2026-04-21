@@ -11,11 +11,13 @@ class TopologyManager:
         self,
         graph: GraphBackend,
         rewire_prob: float = 0.1,
+        rewire_threshold: float | None = None,
         edge_type: str = "COMMUNICATES_WITH",
         seed: int | None = None,
     ):
         self._graph = graph
         self._rewire_prob = rewire_prob
+        self._rewire_threshold = rewire_threshold
         self._edge_type = edge_type
         self._rng = random.Random(seed)
 
@@ -67,11 +69,12 @@ class TopologyManager:
 
         Returns True if rewiring occurred.
         """
+        threshold = self._rewire_threshold if self._rewire_threshold is not None else confidence_bound
         state_a = states[agent_a_id]
         state_b = states[agent_b_id]
         distance = state_a.distance(state_b)
 
-        if distance <= confidence_bound:
+        if distance <= threshold:
             return False
 
         if self._rng.random() > self._rewire_prob:
@@ -83,7 +86,7 @@ class TopologyManager:
             aid for aid, s in states.items()
             if aid != agent_a_id
             and aid != agent_b_id
-            and state_a.distance(s) < confidence_bound
+            and state_a.distance(s) < threshold
         ]
         if candidates:
             new_partner = self._rng.choice(candidates)

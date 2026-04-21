@@ -22,6 +22,7 @@ from swarm.graph.similarity import (
 from swarm.llm.factory import create_provider
 from swarm.simulation.emergence import EmergenceDetector
 from swarm.simulation.engine import SimulationConfig, SimulationEngine, SimulationResult
+from swarm.simulation.logger import SimulationLogger
 
 
 class ExperimentRunner:
@@ -36,6 +37,7 @@ class ExperimentRunner:
         self._society: AgentSociety | None = None
         self._engine: SimulationEngine | None = None
         self._detector: EmergenceDetector | None = None
+        self._logger: SimulationLogger | None = None
 
     def run(self) -> SimulationResult:
         """Execute the full experiment pipeline."""
@@ -44,7 +46,12 @@ class ExperimentRunner:
         self._seed_graph()
         self._setup_society()
         self._setup_engine()
-        return self._engine.run()
+        if self._logger:
+            self._logger.on_start(self._config)
+        result = self._engine.run()
+        if self._logger:
+            self._logger.on_complete(result.ticks_completed, result.stop_reason)
+        return result
 
     def _setup_graph(self) -> None:
         graph_cfg = self._config.get("graph", {})
@@ -135,6 +142,14 @@ class ExperimentRunner:
             config=detect_cfg.get("thresholds", {}),
         )
         self._engine.add_tick_callback(self._detector.on_tick)
+
+        log_cfg = self._config.get("logging", {})
+        self._logger = SimulationLogger(
+            society=self._society,
+            level=log_cfg.get("level", "summary"),
+            file_path=log_cfg.get("file", None),
+        )
+        self._engine.add_tick_callback(self._logger.on_tick)
 
     def _create_personas(self, count: int, source: str, llm_cfg: dict) -> list[AgentPersona]:
         if source == "generate":

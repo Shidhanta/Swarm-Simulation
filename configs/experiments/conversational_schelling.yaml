@@ -1,0 +1,56 @@
+experiment:
+  name: "Conversational Schelling"
+  description: "Modified Schelling where agents converse before rewiring. Tests whether dialogue reduces segregation."
+  hypothesis: "Cross-group conversations reduce segregation speed compared to classical Schelling"
+
+domain:
+  name: "conversational_schelling"
+  belief_dimensions: ["group_identity", "openness"]
+  confidence_bound: 0.6
+  stubbornness: 0.6
+  convergence_rate: 0.2
+  interaction_mode: "deffuant"
+  initial_beliefs:
+    distribution: "bimodal"
+    range: [0.0, 1.0]
+  activity_rate:
+    min: 0.6
+    max: 1.0
+
+agents:
+  count: 10
+  persona_source: "minimal"
+
+seed:
+  entities: []
+
+topology:
+  type: "small_world"
+  k: 4
+  p: 0.2
+  rewire_prob: 0.3
+
+simulation:
+  max_ticks: 8
+  snapshot_every: 1
+  seed: 42
+
+detection:
+  thresholds:
+    modularity_threshold: 0.3
+    echo_chamber_threshold: 0.5
+
+llm:
+  provider: "ollama"
+  model: "qwen2.5"
+  base_url: "http://localhost:8080/v1"
+  temperature: 0.7
+  max_tokens: 256
+  max_turns: 2
+
+logging:
+  level: "verbose"
+  file: "logs/conversational_schelling.jsonl"
+
+graph:
+  backend: "networkx"

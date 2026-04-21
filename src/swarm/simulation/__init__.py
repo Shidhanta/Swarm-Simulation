@@ -16,6 +16,7 @@ from swarm.simulation.engine import (
     SimulationResult,
     SimulationSnapshot,
 )
+from swarm.simulation.logger import SimulationLogger
 from swarm.simulation.runner import ExperimentRunner
 
 __all__ = [
@@ -23,6 +24,7 @@ __all__ = [
     "EmergenceDetector",
     "EmergenceEvent",
     "ExperimentRunner",
+    "SimulationLogger",
     "NetworkMetrics",
     "OpinionMetrics",
     "PhaseTransitionMetrics",

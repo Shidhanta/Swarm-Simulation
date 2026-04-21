@@ -293,6 +293,8 @@ class PhaseTransitionMetrics:
             return 0.0
         N = vectors.shape[0]
         cov = np.cov(vectors.T)
+        if cov.ndim == 0:
+            return float(N * cov)
         return float(N * np.trace(cov))
 
     def flickering(self, mean_history: list[np.ndarray], window: int = 20) -> float:

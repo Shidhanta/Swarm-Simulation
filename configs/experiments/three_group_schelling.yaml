@@ -1,0 +1,67 @@
+experiment:
+  name: "Three-Group Conversational Schelling"
+  description: "Two polarized groups + malleable moderates. Tests whether conversation reduces segregation."
+  hypothesis: "Moderates act as bridges, slowing segregation compared to pure Schelling"
+
+domain:
+  name: "three_group_schelling"
+  belief_dimensions: ["ideology", "openness"]
+  confidence_bound: 1.5
+  convergence_rate: 0.2
+  interaction_mode: "deffuant"
+  groups:
+    - name: "hardline_left"
+      count: 4
+      range: [0.0, 0.2]
+      stubbornness: 0.85
+      activity_rate: 0.7
+    - name: "hardline_right"
+      count: 4
+      range: [0.8, 1.0]
+      stubbornness: 0.85
+      activity_rate: 0.7
+    - name: "moderates"
+      count: 4
+      range: [0.35, 0.65]
+      stubbornness: 0.2
+      activity_rate: 0.9
+
+agents:
+  count: 12
+  persona_source: "minimal"
+
+seed:
+  entities: []
+
+topology:
+  type: "small_world"
+  k: 4
+  p: 0.2
+  rewire_prob: 0.3
+  rewire_threshold: 0.4
+
+simulation:
+  max_ticks: 8
+  snapshot_every: 1
+  seed: 42
+
+detection:
+  thresholds:
+    modularity_threshold: 0.3
+    echo_chamber_threshold: 0.5
+    polarization_threshold: 0.555
+
+logging:
+  level: "verbose"
+  file: "logs/three_group_schelling.jsonl"
+
+llm:
+  provider: "ollama"
+  model: "qwen2.5"
+  base_url: "http://localhost:8080/v1"
+  temperature: 0.7
+  max_tokens: 256
+  max_turns: 2
+
+graph:
+  backend: "networkx"

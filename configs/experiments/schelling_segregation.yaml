@@ -1,0 +1,50 @@
+experiment:
+  name: "Schelling Segregation Model"
+  description: "Network variant of Schelling (1971) — mild homophily preference produces emergent segregation"
+  reference: "Schelling, T.C. (1971) 'Dynamic models of segregation' Journal of Mathematical Sociology 1(2):143-186"
+
+domain:
+  name: "schelling"
+  belief_dimensions: ["group_identity"]
+  confidence_bound: 2.0
+  stubbornness: 1.0
+  convergence_rate: 0.0
+  interaction_mode: "deffuant"
+
+agents:
+  count: 20
+  persona_source: "minimal"
+  initial_beliefs:
+    distribution: "bimodal"
+    range: [0.0, 1.0]
+  activity_rate: 0.8
+
+seed:
+  entities: []
+
+topology:
+  type: "small_world"
+  k: 6
+  p: 0.2
+  rewire_prob: 0.4
+
+simulation:
+  max_ticks: 10
+  snapshot_every: 1
+  seed: 42
+
+detection:
+  thresholds:
+    modularity_threshold: 0.3
+    echo_chamber_threshold: 0.5
+
+llm:
+  provider: "ollama"
+  model: "llama3.2:1b"
+  base_url: "http://localhost:11434/v1"
+  temperature: 0.7
+  max_tokens: 256
+  max_turns: 2
+
+graph:
+  backend: "networkx"

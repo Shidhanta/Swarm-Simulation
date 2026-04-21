@@ -35,6 +35,8 @@ class DefaultDomainSpec(DomainSpec):
         self._mu = config.get("convergence_rate", 0.3)
         self._interaction_mode = config.get("interaction_mode", "deffuant")
         self._similarity_weights = config.get("similarity_weights", None)
+        self._groups = config.get("groups", None)
+        self._group_queue: list[dict] = []
         self._rng = np.random.default_rng(config.get("seed", 42))
 
     @property
@@ -45,6 +47,39 @@ class DefaultDomainSpec(DomainSpec):
         return self._dimensions
 
     def initial_state(self, persona: AgentPersona, graph: GraphBackend) -> AgentState:
+        if self._groups:
+            return self._group_initial_state(persona)
+        return self._distribution_initial_state(persona)
+
+    def _group_initial_state(self, persona: AgentPersona) -> AgentState:
+        D = len(self._dimensions)
+        if not self._group_queue:
+            for group in self._groups:
+                count = group.get("count", 1)
+                for _ in range(count):
+                    self._group_queue.append(group)
+            self._rng.shuffle(self._group_queue)
+
+        group = self._group_queue.pop(0)
+        low = group.get("range", [0.0, 1.0])[0]
+        high = group.get("range", [0.0, 1.0])[1]
+        stubbornness = group.get("stubbornness", self._stubbornness)
+        activity = group.get("activity_rate", 0.5)
+        vector = self._rng.uniform(low, high, size=D).tolist()
+
+        if isinstance(activity, dict):
+            activity = float(self._rng.uniform(activity.get("min", 0.3), activity.get("max", 0.8)))
+
+        return AgentState(
+            entity_id=persona.entity_id,
+            vector=vector,
+            initial_vector=vector.copy(),
+            stubbornness=stubbornness,
+            activity_rate=float(activity),
+            properties={"group": group.get("name", "unknown")},
+        )
+
+    def _distribution_initial_state(self, persona: AgentPersona) -> AgentState:
         D = len(self._dimensions)
         init_cfg = self._config.get("initial_beliefs", {})
         distribution = init_cfg.get("distribution", "uniform")
