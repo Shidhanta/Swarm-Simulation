@@ -906,6 +906,56 @@ A record of what was built in each commit and the reasoning behind key decisions
 - **Configuration object pattern** — YAML → dict → passed to constructors. Single source of truth for all parameters.
 - **Plugin architecture** — dynamic import enables extension without modifying core code.
 
+### Commit 12: `feat: simulation logger, group initialization, separated rewire threshold`
+
+**What was built:**
+- `src/swarm/simulation/logger.py` — `SimulationLogger` with three verbosity levels (verbose/summary/silent) and optional structured JSON file output
+- Updated `DefaultDomainSpec` with group-based initialization — per-group belief ranges, stubbornness, activity rates
+- Updated `TopologyManager` with separate `rewire_threshold` decoupled from `confidence_bound`
+- Updated `ExperimentRunner` to automatically create and register the logger from config
+- `run_experiment.py` — simplified experiment runner script
+- `configs/experiments/three_group_schelling.yaml` — three-group conversational Schelling experiment
+- Fixed `EmergenceDetector.susceptibility()` for 1D belief vectors
+- Updated experiment configs to support llama.cpp backend via `base_url`
+
+**Key decisions and reasoning:**
+
+- **`SimulationLogger` as first-class tick callback** — same pattern as `EmergenceDetector`. Registers via `add_tick_callback()`, doesn't affect simulation logic. Created automatically by `ExperimentRunner` from the `logging` config section. No per-experiment logging code needed.
+
+- **Three verbosity levels:**
+  - `verbose` — per-tick: active agents, pairs, conversations with snippets, rewires, belief mean/variance. For interactive debugging and experiment monitoring.
+  - `summary` — per-tick one-liner: pairs, rewires, variance. For batch runs.
+  - `silent` — no stdout. For programmatic use.
+
+- **Structured JSON logs (`file: "path.jsonl"`)** — one JSON object per tick: full belief vectors, pair counts, rewire details. Written with `flush()` after each tick so logs survive crashes. JSONL format enables post-hoc analysis with pandas/numpy without custom parsing.
+
+- **`on_start()` / `on_complete()` lifecycle hooks** — print experiment banner (name, agent count, max ticks) at start and summary (ticks completed, elapsed time, stop reason) at end. Called by `ExperimentRunner.run()` before and after the engine loop.
+
+- **Group-based initialization (backwards-compatible)** — when config has `groups` key, each group specifies count, belief range, stubbornness, and activity rate. Agents are assigned to groups in shuffled order. When `groups` is absent, existing distribution-based logic runs unchanged. Group name stored in `AgentState.properties["group"]` for analysis.
+
+- **Separated `rewire_threshold` from `confidence_bound`** — these control different decisions: `confidence_bound` determines "can these agents talk?" (pair selection), `rewire_threshold` determines "should these agents disconnect?" (post-interaction topology). Decoupling them enables experiments where dissimilar agents CAN converse but MAY choose to disconnect afterward (the conversational Schelling design). When `rewire_threshold` is absent, falls back to `confidence_bound` (no change to existing experiments).
+
+**Experiment: Three-Group Conversational Schelling**
+
+Design: 4 hardline-left (beliefs [0.0-0.2], stubbornness 0.85), 4 hardline-right (beliefs [0.8-1.0], stubbornness 0.85), 4 moderates (beliefs [0.35-0.65], stubbornness 0.2). Small-world topology, confidence_bound 1.5 (everyone can talk), rewire_threshold 0.4 (disconnect if very dissimilar after talking).
+
+Results after 8 ticks:
+- Hardliners held position — left mean stayed at ~0.07, right at ~0.94. High stubbornness prevented drift.
+- Moderates drifted slightly rightward — ideology 0.500 → 0.550. Suggests asymmetric interaction patterns in this topology instance.
+- 5 rewiring events total — rare but present. Cross-group connections occasionally broke.
+- 7 of 12 agents showed measurable belief change — all moderates + some hardliners who happened to pair with moderates.
+- No emergence events triggered — 8 ticks insufficient for dramatic structural change. Would need 20-30 ticks for echo chamber formation.
+- One moderate briefly crossed into "right" zone at tick 2-3, then returned — the "bridge wobble" effect.
+
+**Research grounding:**
+- Schelling (1971) — "Dynamic models of segregation" — original model showing mild preferences produce dramatic segregation
+- The conversational variant tests: does dialogue between groups slow segregation? Result: moderates act as partial bridges but are gradually pulled toward one pole.
+
+**Design patterns used:**
+- **Observer pattern** — `SimulationLogger` observes without affecting. Multiple observers (logger + detector) coexist on the same engine.
+- **Null object pattern** — when `rewire_threshold` is `None`, falls back to confidence_bound. No special-casing needed in calling code.
+- **Builder pattern** — group queue built once at first call to `_group_initial_state()`, then consumed sequentially. Shuffle ensures group assignment isn't order-dependent.
+
 ---
 
 ## Interview Q&A
@@ -941,6 +991,12 @@ Three mechanisms: (1) Event deduplication — the same event type is suppressed 
 
 **Q: Why 26 metrics? Isn't that excessive for 50 agents?**
 The point isn't that every metric fires every run. Different simulation domains produce different emergent phenomena — stock markets produce cascades and herding, social simulations produce echo chambers and polarization. Having a comprehensive metric suite means the system can detect whatever emerges without domain-specific tuning. The tiered scheduling (every tick / every 5 / every 10) ensures the computational cost is bounded: ~O(N²D) per tick worst case, which for N=50 is sub-millisecond — the LLM calls are 10,000x more expensive.
+
+**Q: Can you run the simulation with different LLM backends?**
+Yes — any OpenAI-compatible endpoint works. The config just needs `base_url` pointing to the server. We've tested with Ollama (llama3, llama3.2:1b) and llama.cpp (Qwen2.5-3B). Switching backends is a one-line config change. The `provider: "ollama"` setting works for any OpenAI-compatible API, not just Ollama specifically.
+
+**Q: What kinds of simulations can you run without writing code?**
+Anything expressible as: agents with N-dimensional beliefs, pairwise conversations, Deffuant/DeGroot/mean-field/repulsive interaction, adaptive topology. This covers: opinion polarization, echo chamber formation, wisdom-of-crowds degradation, backfire effects, multi-group segregation dynamics, and parameter sweep phase transition studies. Custom domains with external tools or non-standard state machines require plugin mode (a Python class implementing `DomainSpec`).
 
 **Q: What would you do differently if starting over?**
 *(To be updated as the project matures)*
