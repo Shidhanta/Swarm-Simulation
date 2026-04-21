@@ -1,0 +1,63 @@
+experiment:
+  name: "Propaganda Influence on Population Beliefs"
+  description: "Tests how a small group of stubborn propaganda agents shifts general population away from ground truth"
+  hypothesis: "20% propaganda agents with high stubbornness can shift >30% of the population away from truth"
+  reference: "Hegselmann & Krause (2015) 'Opinion dynamics under radical groups'; Vosoughi et al. (Science, 2018)"
+  ground_truth: 0.5
+
+domain:
+  name: "propaganda"
+  belief_dimensions: ["belief"]
+  confidence_bound: 0.6
+  convergence_rate: 0.25
+  interaction_mode: "deffuant"
+  groups:
+    - name: "propaganda"
+      count: 2
+      range: [0.9, 1.0]
+      stubbornness: 0.95
+      activity_rate: 1.0
+    - name: "general_population"
+      count: 8
+      range: [0.4, 0.6]
+      stubbornness: 0.3
+      activity_rate: 0.5
+
+agents:
+  count: 10
+  persona_source: "minimal"
+
+seed:
+  entities: []
+
+topology:
+  type: "small_world"
+  k: 4
+  p: 0.2
+  rewire_prob: 0.1
+  rewire_threshold: 0.5
+
+simulation:
+  max_ticks: 15
+  snapshot_every: 1
+  seed: 42
+
+detection:
+  thresholds:
+    consensus_threshold: 0.9
+    polarization_threshold: 0.555
+
+logging:
+  level: "verbose"
+  file: "logs/propaganda_influence.jsonl"
+
+llm:
+  provider: "ollama"
+  model: "qwen2.5"
+  base_url: "http://localhost:8080/v1"
+  temperature: 0.7
+  max_tokens: 256
+  max_turns: 2
+
+graph:
+  backend: "networkx"
