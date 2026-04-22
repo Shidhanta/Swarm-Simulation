@@ -1,0 +1,51 @@
+experiment:
+  name: "Propaganda Counterfactual Analysis"
+  description: "What-if analysis on the propaganda influence experiment"
+
+counterfactual:
+  source_experiment: "configs/experiments/propaganda_influence.yaml"
+  source_log: "logs/propaganda_influence.jsonl"
+  divergence_threshold: 0.02
+  scenarios:
+    - name: "remove_defender"
+      rewind_to_tick: 3
+      interventions:
+        - type: "remove_agent"
+          target: "Agent_3"
+
+    - name: "weaken_propaganda"
+      rewind_to_tick: 3
+      interventions:
+        - type: "modify_property"
+          target: "Agent_0"
+          key: "stubbornness"
+          value: 0.5
+        - type: "modify_property"
+          target: "Agent_1"
+          key: "stubbornness"
+          value: 0.5
+
+    - name: "boost_propaganda"
+      rewind_to_tick: 3
+      interventions:
+        - type: "modify_belief"
+          target: "Agent_5"
+          vector: [0.95]
+        - type: "modify_property"
+          target: "Agent_5"
+          key: "stubbornness"
+          value: 0.9
+
+simulation:
+  max_ticks: 15
+
+llm:
+  provider: "ollama"
+  model: "qwen2.5"
+  base_url: "http://localhost:8080/v1"
+  temperature: 0.7
+  max_tokens: 256
+  max_turns: 2
+
+graph:
+  backend: "networkx"

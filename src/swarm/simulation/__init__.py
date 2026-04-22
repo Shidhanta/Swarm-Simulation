@@ -16,6 +16,14 @@ from swarm.simulation.engine import (
     SimulationResult,
     SimulationSnapshot,
 )
+from swarm.simulation.intervention import (
+    ComparisonResult,
+    CounterfactualRunner,
+    DivergencePoint,
+    Intervention,
+    Scenario,
+    TrajectoryResult,
+)
 from swarm.simulation.logger import SimulationLogger
 from swarm.simulation.runner import ExperimentRunner
 
@@ -23,8 +31,14 @@ __all__ = [
     "CollectiveMetrics",
     "EmergenceDetector",
     "EmergenceEvent",
+    "ComparisonResult",
+    "CounterfactualRunner",
+    "DivergencePoint",
     "ExperimentRunner",
+    "Intervention",
+    "Scenario",
     "SimulationLogger",
+    "TrajectoryResult",
     "NetworkMetrics",
     "OpinionMetrics",
     "PhaseTransitionMetrics",

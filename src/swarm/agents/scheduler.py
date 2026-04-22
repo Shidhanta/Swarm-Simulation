@@ -1,16 +1,20 @@
 import heapq
-import random
 
 from swarm.agents.state import AgentState
+from swarm.simulation.hashing import event_random, event_random_pair
 
 
 class InteractionScheduler:
     """Activity-driven scheduling with event-driven overlay."""
 
-    def __init__(self, seed: int | None = None):
-        self._rng = random.Random(seed)
-        self._pending: list[tuple[float, str]] = []
+    def __init__(self, seed: int = 42):
+        self._seed = seed
+        self._pending: list[tuple[float, int, str]] = []
         self._event_counter = 0
+        self._tick = 0
+
+    def set_tick(self, tick: int) -> None:
+        self._tick = tick
 
     def get_active_agents(
         self, states: dict[str, AgentState], dt: float = 1.0
@@ -18,7 +22,8 @@ class InteractionScheduler:
         """Select agents that activate this tick based on activity rates."""
         active = []
         for agent_id, state in states.items():
-            if self._rng.random() < state.activity_rate * dt:
+            r = event_random(self._seed, self._tick, "activation", agent_id)
+            if r < state.activity_rate * dt:
                 active.append(agent_id)
         return active
 
@@ -67,7 +72,15 @@ class InteractionScheduler:
                 1.0 / (1.0 + states[agent_id].distance(states[p]))
                 for p in valid
             ]
-            partner = self._rng.choices(valid, weights=weights, k=1)[0]
+            total_w = sum(weights)
+            pick = event_random(self._seed, self._tick, "pair_selection", agent_id) * total_w
+            cumulative = 0.0
+            partner = valid[0]
+            for p, w in zip(valid, weights):
+                cumulative += w
+                if cumulative >= pick:
+                    partner = p
+                    break
             pairs.append((agent_id, partner))
             used.add(agent_id)
             used.add(partner)

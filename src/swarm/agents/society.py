@@ -70,9 +70,11 @@ class AgentSociety:
         agent_ids = list(self._agents.keys())
         self._topology.initialize_small_world(agent_ids, k=k, p=p)
 
-    def tick(self) -> TickResult:
+    def tick(self, tick_number: int = 0) -> TickResult:
         """Execute one simulation step."""
         result = TickResult()
+        self._scheduler.set_tick(tick_number)
+        self._topology.set_tick(tick_number)
 
         activity_agents = self._scheduler.get_active_agents(self._states)
         event_agents = self._scheduler.get_event_driven_agents()

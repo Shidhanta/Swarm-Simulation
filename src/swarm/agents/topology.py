@@ -2,6 +2,7 @@ import random
 
 from swarm.agents.state import AgentState
 from swarm.graph.base import GraphBackend, utc_now
+from swarm.simulation.hashing import event_random, event_random_pair
 
 
 class TopologyManager:
@@ -13,13 +14,18 @@ class TopologyManager:
         rewire_prob: float = 0.1,
         rewire_threshold: float | None = None,
         edge_type: str = "COMMUNICATES_WITH",
-        seed: int | None = None,
+        seed: int = 42,
     ):
         self._graph = graph
         self._rewire_prob = rewire_prob
         self._rewire_threshold = rewire_threshold
         self._edge_type = edge_type
-        self._rng = random.Random(seed)
+        self._seed = seed
+        self._init_rng = random.Random(seed)
+        self._tick = 0
+
+    def set_tick(self, tick: int) -> None:
+        self._tick = tick
 
     def initialize_small_world(
         self, agent_ids: list[str], k: int = 4, p: float = 0.1
@@ -43,7 +49,7 @@ class TopologyManager:
 
         for i in range(n):
             for offset in range(1, k // 2 + 1):
-                if self._rng.random() < p:
+                if self._init_rng.random() < p:
                     j = (i + offset) % n
                     self._graph.expire_relationship(
                         agent_ids[i], agent_ids[j], self._edge_type
@@ -53,7 +59,7 @@ class TopologyManager:
                         if aid != agent_ids[i] and aid != agent_ids[j]
                     ]
                     if candidates:
-                        new_target = self._rng.choice(candidates)
+                        new_target = self._init_rng.choice(candidates)
                         self._graph.add_relationship(
                             agent_ids[i], new_target, self._edge_type
                         )
@@ -65,10 +71,7 @@ class TopologyManager:
         states: dict[str, AgentState],
         confidence_bound: float,
     ) -> bool:
-        """After interaction, possibly rewire if agents are too dissimilar.
-
-        Returns True if rewiring occurred.
-        """
+        """After interaction, possibly rewire if agents are too dissimilar."""
         threshold = self._rewire_threshold if self._rewire_threshold is not None else confidence_bound
         state_a = states[agent_a_id]
         state_b = states[agent_b_id]
@@ -77,7 +80,8 @@ class TopologyManager:
         if distance <= threshold:
             return False
 
-        if self._rng.random() > self._rewire_prob:
+        r = event_random_pair(self._seed, self._tick, "rewire", agent_a_id, agent_b_id)
+        if r > self._rewire_prob:
             return False
 
         self._graph.expire_relationship(agent_a_id, agent_b_id, self._edge_type)
@@ -89,7 +93,10 @@ class TopologyManager:
             and state_a.distance(s) < threshold
         ]
         if candidates:
-            new_partner = self._rng.choice(candidates)
+            pick_r = event_random_pair(self._seed, self._tick, "rewire_target", agent_a_id, agent_b_id)
+            idx = int(pick_r * len(candidates))
+            idx = min(idx, len(candidates) - 1)
+            new_partner = candidates[idx]
             self._graph.add_relationship(
                 agent_a_id,
                 new_partner,

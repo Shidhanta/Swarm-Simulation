@@ -62,7 +62,7 @@ class SimulationEngine:
 
         for tick in range(self._config.max_ticks):
             self._tick = tick
-            tick_result = self._society.tick()
+            tick_result = self._society.tick(tick_number=tick)
             self._history.append(tick_result)
 
             if tick % self._config.snapshot_every == 0:

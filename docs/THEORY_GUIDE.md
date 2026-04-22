@@ -956,6 +956,55 @@ Results after 8 ticks:
 - **Null object pattern** — when `rewire_threshold` is `None`, falls back to confidence_bound. No special-casing needed in calling code.
 - **Builder pattern** — group queue built once at first call to `_group_initial_state()`, then consumed sequentially. Shuffle ensures group assignment isn't order-dependent.
 
+### Commit 13: `feat: intervention + counterfactual replay with event-keyed hashing`
+
+**What was built:**
+- `src/swarm/simulation/hashing.py` — `event_random()` and `event_random_pair()` for causally valid counterfactual replay
+- `src/swarm/simulation/intervention.py` — `Intervention`, `Scenario`, `CounterfactualRunner`, `TrajectoryResult`, `ComparisonResult`, `DivergencePoint`
+- Refactored `src/swarm/agents/scheduler.py` — replaced sequential PRNG with event-keyed hashing
+- Refactored `src/swarm/agents/topology.py` — replaced sequential PRNG with event-keyed hashing
+- Updated `src/swarm/agents/society.py` — passes tick number to scheduler and topology
+- Updated `src/swarm/simulation/engine.py` — passes tick number to society
+- Updated `run_experiment.py` — detects `counterfactual` config section and delegates to `CounterfactualRunner`
+- `configs/experiments/propaganda_counterfactual.yaml` — example counterfactual config with 3 scenarios
+- Updated `simulation/__init__.py` with all new exports
+
+**Key decisions and reasoning:**
+
+- **Event-keyed hashing (Buffalo et al., 2026)** — The single most important architectural change. Standard `random.Random(seed)` produces causally invalid counterfactuals: removing one agent shifts the PRNG sequence for all subsequent events, so observed divergence reflects PRNG artifacts, not causal effects. Event-keyed hashing uses `hash(seed, tick, event_type, entity_id)` per random decision, making each agent's randomness independent. Removing Agent_2 has zero effect on Agent_3's random values. This is the foundation for valid causal comparison.
+
+- **Multi-trajectory comparison (not just pairwise)** — Most ABM literature compares baseline vs one intervention. Our system supports N scenarios compared simultaneously against one baseline. This enables comparative attribution: "removing the defender mattered more than weakening propaganda." Forward-looking design — multi-trajectory ABM comparison is an emerging methodology (Triantafyllou et al., 2024).
+
+- **Config-driven scenarios** — Users write YAML specifying rewind tick + interventions per scenario. No Python needed. The `run_experiment.py` entrypoint auto-detects counterfactual configs and delegates to `CounterfactualRunner`.
+
+- **Five intervention types:**
+  - `remove_agent` — structural (removes node + all edges)
+  - `modify_belief` — parametric (sets belief vector)
+  - `modify_property` — parametric (sets stubbornness, activity_rate, or custom properties)
+  - `add_relationship` — structural (creates new edge)
+  - `remove_relationship` — structural (expires existing edge)
+
+- **Fast-forward + replay architecture** — For a scenario rewinding to tick 5: the system re-runs ticks 0-4 with the same event-keyed randomness (producing identical results to baseline), applies interventions at tick 5, then replays ticks 5-N. The fast-forward phase is necessary because we don't serialize full state (graph + all agent objects) — we reconstruct by replaying. LLM calls happen during both phases.
+
+- **Per-tick logging during counterfactual** — Both fast-forward and replay phases print live progress: tick number, pairs formed, rewires, mean belief, variance. Essential for monitoring long-running counterfactual analysis.
+
+- **Divergence detection via threshold** — For each metric, the system walks the baseline and scenario trajectories in parallel. The first tick where `|baseline - scenario| > threshold` is the divergence point. Simple and interpretable. More sophisticated methods (PELT change-point detection, BOCPD) can be added later.
+
+- **Agent name resolution** — Interventions reference agents by name ("Agent_3"), not UUID. The runner resolves names to entity IDs via the persona registry. This keeps configs human-readable.
+
+**Research grounding:**
+- Event-keyed hashing: Buffalo et al. (2026) — "Realizing Common Random Numbers: Event-Keyed Hashing for Causally Valid Stochastic Models"
+- Counterfactual effect decomposition: Triantafyllou et al. (2024) — Shapley-based attribution in multi-agent sequential decision-making
+- LLM non-determinism: Atil et al. (2024) — justifies why opinion dynamics (deterministic Deffuant) should drive state updates, not LLM conversation content
+- Counterfactual probing in LLM simulations: Yu et al. (2026), CAMO — micro-to-macro causal chains
+- Pearl's do-calculus: `remove_agent` = `do(agent_exists := false)`, `modify_belief` = `do(belief := value)`
+
+**Design patterns used:**
+- **Command pattern** — each `Intervention` is a command object. The runner applies them polymorphically based on `type`.
+- **Memento pattern (variation)** — the source log JSONL serves as the memento. Baseline state at any tick is reconstructable from the log without re-running.
+- **Strategy pattern** — `CounterfactualRunner` vs `ExperimentRunner` are selected by config content (presence of `counterfactual` key). Same entrypoint, different execution path.
+- **Template method** — `_run_scenario()` defines the skeleton: fast-forward → apply interventions → replay → collect metrics. Intervention types fill in the variable step.
+
 ---
 
 ## Interview Q&A
@@ -978,7 +1027,10 @@ Three strategies: (1) Ollama with local models for zero-cost development, (2) no
 CAMEL's autonomous role-playing model maps directly to what a swarm simulation needs — agents that converse and act without human intervention. AutoGen assumes a human-in-the-loop pattern. CrewAI is pipeline-oriented, which doesn't fit emergent interaction. CAMEL also has native support for agent societies and knowledge graph integration.
 
 **Q: How do you ensure simulation results are reproducible?**
-Seeded randomness (`simulation.seed` in config) controls agent scheduling and interaction selection. With the same seed, same config, and deterministic LLM responses (temperature=0), simulations produce identical results.
+Event-keyed hashing (not sequential PRNG) ensures that each random decision is deterministic based on `hash(seed, tick, event_type, agent_id)`. This means removing or adding agents doesn't shift randomness for other agents — critical for valid counterfactual comparison. The opinion dynamics (Deffuant update) are deterministic given the same belief vectors, regardless of LLM conversation content.
+
+**Q: Why event-keyed hashing instead of standard seeded randomness?**
+Standard `random.Random(seed)` draws from a sequential stream. Removing one agent shifts every subsequent draw — Agent_3 gets Agent_2's random number, Agent_4 gets Agent_3's, etc. Counterfactual comparisons then measure PRNG artifacts, not causal effects. Event-keyed hashing makes each decision independent: `hash(seed, tick, "activation", "Agent_3")` returns the same value regardless of whether Agent_2 exists. This is based on Buffalo et al. (2026).
 
 **Q: How does the society layer handle domain extensibility?**
 The `DomainSpec` ABC defines the contract: vector dimensions, initial state, confidence bound, post-interaction update, and similarity weighting. Adding a new simulation domain (e.g., supply chain, epidemiology) means implementing one class — no engine changes. The society layer operates on generic belief vectors and never knows whether it's simulating stock traders or social media users. The Deffuant bounded confidence, Friedkin-Johnsen anchoring, and adaptive rewiring all work on the generic vector.
