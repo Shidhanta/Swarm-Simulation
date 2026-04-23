@@ -1005,6 +1005,60 @@ Results after 8 ticks:
 - **Strategy pattern** — `CounterfactualRunner` vs `ExperimentRunner` are selected by config content (presence of `counterfactual` key). Same entrypoint, different execution path.
 - **Template method** — `_run_scenario()` defines the skeleton: fast-forward → apply interventions → replay → collect metrics. Intervention types fill in the variable step.
 
+### Commit 14: `feat: report generation and FastAPI dashboard`
+
+**What was built:**
+- `src/swarm/simulation/report.py` — `ReportGenerator` producing text summaries + 7 publication-quality matplotlib plots (opinion trajectories, density heatmap, final distribution, metric timeseries, network snapshots, interaction heatmap, early warnings)
+- `src/swarm/dashboard/` — full FastAPI web dashboard:
+  - `app.py` — FastAPI application with 11 API endpoints serving experiment data
+  - `data_loader.py` — `ExperimentData` (JSONL parser) + `ExperimentIndex` (experiment discovery)
+  - `static/index.html` — single-page dashboard with 6 tabs
+  - `static/style.css` — dark theme layout with CSS grid
+  - `static/dashboard.js` — Plotly.js charts, vis.js network graph, tick slider, tab switching
+- Enhanced `src/swarm/simulation/logger.py` — enriched JSONL format with conversation text, network edges, metrics, agent map (header/footer records)
+- Updated `src/swarm/__main__.py` — added `dashboard` CLI command
+- Fixed `topology.py` — bidirectional edge expiry in `maybe_rewire()`
+- Fixed `intervention.py` — counterfactual runner no longer overwrites source log
+- Added matplotlib to `pyproject.toml` and `requirements.txt`
+
+**Key decisions and reasoning:**
+
+- **Enriched JSONL as single data source** — the logger now writes per-tick: full conversation text (speaker + content per turn), network edge list, all emergence metrics, pairs detail, and rewire details. Header record stores agent map + config, footer stores events + summary. The dashboard reads only from this file — no re-computation needed. Trade-off: larger log files (~100KB-1MB per experiment), but avoids any dependency on the simulation runtime for post-hoc analysis.
+
+- **Header/footer records in JSONL** — metadata bookends around tick records. Header stores `agent_map` (UUID → name mapping) and `dimensions` (belief vector meaning). Footer stores all emergence events and final summary. Records distinguished by `"type": "header"/"tick"/"footer"`. Backward-compatible: old logs without `type` field are treated as tick records.
+
+- **FastAPI + vanilla JS (no React/Vue/npm)** — the dashboard is a single HTML page with Plotly.js and vis.js loaded from CDN. No build step, no node_modules. FastAPI serves both the API and static files. This keeps the dependency surface minimal and the project easy to clone and run.
+
+- **Plotly.js for charts** — interactive (zoom, hover, pan) out of the box. Dark theme via layout configuration. Used for: opinion trajectories, belief histograms, metric time series, sparklines, interaction heatmaps, metric small multiples.
+
+- **vis.js for network graph** — superior network interactivity over Plotly: drag nodes, physics-based layout, hover labels. Nodes colored by belief (red = high, blue = low). Updates when tick slider moves.
+
+- **Tick slider governs all panels** — moving the slider updates: belief histogram, network graph, conversation panel, metric current-value indicators. Summary and trajectory panels show all ticks at once. This unifies the temporal exploration experience.
+
+- **6 dashboard tabs** — Summary (config + events + sparklines), Beliefs (trajectories + histogram), Network (graph + stats), Metrics (selectable time series + small multiples), Interactions (heatmap + rewire log), Conversations (full dialogue text per tick).
+
+- **Counterfactual runner silent logging** — scenario replays set `logging: {level: "silent"}` to prevent overwriting the source log file. This was a bug discovered during testing: the runner's `ExperimentRunner` re-opened the log in write mode, truncating the baseline data.
+
+- **Report generator with matplotlib** — produces 7 publication-quality plots (300 DPI, serif font, proper axis labels). Auto-generated after each experiment run when `report.enabled: true` in config. Saves to `reports/{experiment_name}/`. Uses `Agg` backend (no display needed).
+
+**Dashboard API endpoints:**
+- `GET /api/experiments` — list all experiments with log files
+- `GET /api/experiment/{name}/config` — YAML config as JSON
+- `GET /api/experiment/{name}/ticks` — lightweight tick summaries
+- `GET /api/experiment/{name}/tick/{n}` — full tick data
+- `GET /api/experiment/{name}/metrics` — all metric time series
+- `GET /api/experiment/{name}/events` — emergence events
+- `GET /api/experiment/{name}/network/{tick}` — nodes + edges at tick
+- `GET /api/experiment/{name}/conversations/{tick}` — full conversation text
+- `GET /api/experiment/{name}/beliefs` — per-agent belief trajectories
+- `GET /api/experiment/{name}/reports` — list report images
+- `GET /api/experiment/{name}/reports/{file}` — serve report image
+
+**Design patterns used:**
+- **Backend for Frontend (BFF)** — the API is shaped for the dashboard's specific data needs, not a generic REST API. Each endpoint returns exactly what one panel needs.
+- **Lazy loading with caching** — `ExperimentData` loads the JSONL once on first access, caches in memory. Per-tick network/conversation data fetched on demand from the frontend.
+- **Observer pattern (continued)** — `SimulationLogger` and `EmergenceDetector` both observe the simulation via tick callbacks. The logger now reads the detector's metrics via `set_detector()` coupling.
+
 ---
 
 ## Interview Q&A

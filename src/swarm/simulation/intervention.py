@@ -105,6 +105,10 @@ class CounterfactualRunner:
                 if not line.strip():
                     continue
                 record = json.loads(line)
+                if record.get("type") in ("header", "footer"):
+                    continue
+                if "tick" not in record:
+                    continue
                 ticks = record["tick"] + 1
                 vectors = list(record["belief_vectors"].values())
                 arr = np.array(vectors)
@@ -120,6 +124,7 @@ class CounterfactualRunner:
         print(f"\n  Running scenario: {scenario.name} (rewind to tick {scenario.rewind_to_tick})")
 
         runner = ExperimentRunner(self._source_experiment)
+        runner._config["logging"] = {"level": "silent"}
         runner._setup_graph()
         runner._setup_domain()
         runner._seed_graph()

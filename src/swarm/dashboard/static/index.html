@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Swarm Simulation Dashboard</title>
+    <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
+    <script src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <header id="topbar">
+        <div class="topbar-left">
+            <h1>Swarm Dashboard</h1>
+            <select id="experiment-select"></select>
+        </div>
+        <div class="topbar-right">
+            <label>Tick: <span id="tick-display">0</span></label>
+            <input type="range" id="tick-slider" min="0" max="0" value="0">
+            <span id="tick-max">/ 0</span>
+        </div>
+    </header>
+
+    <div id="layout">
+        <aside id="sidebar">
+            <h3>Timeline</h3>
+            <div id="timeline"></div>
+        </aside>
+
+        <main id="main-panel">
+            <nav id="tab-bar">
+                <button class="tab active" data-tab="summary">Summary</button>
+                <button class="tab" data-tab="beliefs">Beliefs</button>
+                <button class="tab" data-tab="network">Network</button>
+                <button class="tab" data-tab="metrics">Metrics</button>
+                <button class="tab" data-tab="interactions">Interactions</button>
+                <button class="tab" data-tab="conversations">Conversations</button>
+            </nav>
+
+            <div id="tab-content">
+                <div class="panel active" id="panel-summary">
+                    <div class="summary-grid">
+                        <div class="card" id="config-card">
+                            <h3>Configuration</h3>
+                            <div id="config-content"></div>
+                        </div>
+                        <div class="card" id="result-card">
+                            <h3>Result</h3>
+                            <div id="result-content"></div>
+                        </div>
+                    </div>
+                    <div class="card" id="events-card">
+                        <h3>Emergence Events</h3>
+                        <div id="events-content"></div>
+                    </div>
+                    <div class="card" id="sparklines-card">
+                        <h3>Key Metrics</h3>
+                        <div id="sparklines-content"></div>
+                    </div>
+                </div>
+
+                <div class="panel" id="panel-beliefs">
+                    <div class="card full-width">
+                        <h3>Opinion Trajectories</h3>
+                        <div id="beliefs-trajectory-plot"></div>
+                    </div>
+                    <div class="card full-width">
+                        <h3>Belief Distribution at Tick <span id="beliefs-tick-label">0</span></h3>
+                        <div id="beliefs-histogram-plot"></div>
+                    </div>
+                </div>
+
+                <div class="panel" id="panel-network">
+                    <div class="card full-width">
+                        <h3>Network at Tick <span id="network-tick-label">0</span></h3>
+                        <div id="network-graph"></div>
+                    </div>
+                    <div class="card">
+                        <h3>Network Stats</h3>
+                        <div id="network-stats"></div>
+                    </div>
+                </div>
+
+                <div class="panel" id="panel-metrics">
+                    <div class="card full-width">
+                        <h3>Metric Time Series</h3>
+                        <select id="metric-select"></select>
+                        <div id="metric-detail-plot"></div>
+                    </div>
+                    <div class="card full-width">
+                        <h3>Metric Dashboard</h3>
+                        <div id="metric-grid"></div>
+                    </div>
+                </div>
+
+                <div class="panel" id="panel-interactions">
+                    <div class="card full-width">
+                        <h3>Interaction Frequency</h3>
+                        <div id="interaction-heatmap-plot"></div>
+                    </div>
+                    <div class="card full-width">
+                        <h3>Rewire Log</h3>
+                        <div id="rewire-log"></div>
+                    </div>
+                </div>
+
+                <div class="panel" id="panel-conversations">
+                    <div class="card full-width">
+                        <h3>Conversations at Tick <span id="conv-tick-label">0</span></h3>
+                        <div id="conversation-list"></div>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <script src="/static/dashboard.js"></script>
+</body>
+</html>

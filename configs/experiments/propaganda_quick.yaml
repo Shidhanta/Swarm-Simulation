@@ -1,0 +1,57 @@
+experiment:
+  name: "Propaganda Quick Test"
+  description: "Fast propaganda test for counterfactual validation"
+  ground_truth: 0.5
+
+domain:
+  name: "propaganda_quick"
+  belief_dimensions: ["belief"]
+  confidence_bound: 0.6
+  convergence_rate: 0.25
+  interaction_mode: "deffuant"
+  groups:
+    - name: "propaganda"
+      count: 2
+      range: [0.9, 1.0]
+      stubbornness: 0.95
+      activity_rate: 1.0
+    - name: "population"
+      count: 4
+      range: [0.4, 0.6]
+      stubbornness: 0.3
+      activity_rate: 0.7
+
+agents:
+  count: 6
+  persona_source: "minimal"
+
+seed:
+  entities: []
+
+topology:
+  type: "full_mesh"
+  rewire_prob: 0.1
+  rewire_threshold: 0.5
+
+simulation:
+  max_ticks: 5
+  snapshot_every: 1
+  seed: 42
+
+detection:
+  thresholds: {}
+
+logging:
+  level: "summary"
+  file: "logs/propaganda_quick.jsonl"
+
+llm:
+  provider: "ollama"
+  model: "qwen2.5"
+  base_url: "http://localhost:8080/v1"
+  temperature: 0.7
+  max_tokens: 256
+  max_turns: 2
+
+graph:
+  backend: "networkx"

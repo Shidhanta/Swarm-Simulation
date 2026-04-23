@@ -42,6 +42,12 @@ llm:
 
 logging:
   level: "verbose"
+  file: "logs/quick_test.jsonl"
+
+report:
+  enabled: true
+  format: "text+plots"
+  output: "reports/quick_test"
 
 graph:
   backend: "networkx"

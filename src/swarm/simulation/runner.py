@@ -23,6 +23,7 @@ from swarm.llm.factory import create_provider
 from swarm.simulation.emergence import EmergenceDetector
 from swarm.simulation.engine import SimulationConfig, SimulationEngine, SimulationResult
 from swarm.simulation.logger import SimulationLogger
+from swarm.simulation.report import ReportGenerator
 
 
 class ExperimentRunner:
@@ -51,6 +52,19 @@ class ExperimentRunner:
         result = self._engine.run()
         if self._logger:
             self._logger.on_complete(result.ticks_completed, result.stop_reason)
+
+        report_cfg = self._config.get("report", {})
+        if report_cfg.get("enabled", False):
+            report = ReportGenerator(
+                result=result,
+                detector=self._detector,
+                society=self._society,
+                config=self._config,
+                output_dir=report_cfg.get("output", "reports"),
+            )
+            include_plots = report_cfg.get("format", "text") == "text+plots"
+            report.generate(include_plots=include_plots)
+
         return result
 
     def _setup_graph(self) -> None:
@@ -149,6 +163,7 @@ class ExperimentRunner:
             level=log_cfg.get("level", "summary"),
             file_path=log_cfg.get("file", None),
         )
+        self._logger.set_detector(self._detector)
         self._engine.add_tick_callback(self._logger.on_tick)
 
     def _create_personas(self, count: int, source: str, llm_cfg: dict) -> list[AgentPersona]:

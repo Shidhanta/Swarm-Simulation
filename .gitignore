@@ -28,6 +28,7 @@ neo4j/data/
 *.swo
 
 logs/
+reports/
 *.log
 
 # Claude Code session context

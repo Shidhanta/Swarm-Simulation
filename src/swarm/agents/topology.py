@@ -84,7 +84,13 @@ class TopologyManager:
         if r > self._rewire_prob:
             return False
 
-        self._graph.expire_relationship(agent_a_id, agent_b_id, self._edge_type)
+        try:
+            self._graph.expire_relationship(agent_a_id, agent_b_id, self._edge_type)
+        except ValueError:
+            try:
+                self._graph.expire_relationship(agent_b_id, agent_a_id, self._edge_type)
+            except ValueError:
+                return False
 
         candidates = [
             aid for aid, s in states.items()
